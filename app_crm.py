@@ -558,4 +558,5 @@ with pestana7:
     * 💾 **Tus datos son inmortales:** Aunque se reinicie la aplicación, tu información no se perderá.
     * 📑 **Los PDFs se guardan en bóveda:** Tus documentos ahora se transforman en código binario y se guardan directamente dentro de la base de datos de forma encriptada.
     * 🔄 **Respaldos Automáticos:** Supabase realiza copias de seguridad de forma interna diariamente. ¡Ya no necesitas hacer clics manuales ni usar Google Drive!
+
     """)

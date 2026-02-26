@@ -9,6 +9,8 @@ from fpdf import FPDF
 import tempfile
 import urllib.parse
 from sqlalchemy import create_engine, text
+import io
+import zipfile
 
 # --- 1. CONFIGURACIÓN DE INTELIGENCIA ARTIFICIAL Y PÁGINA ---
 st.set_page_config(page_title="Agentia CRM", layout="wide", page_icon="icono_agentia.png")
@@ -64,22 +66,23 @@ if not st.session_state['autenticado']:
 # --- 2. CONEXIÓN A LA NUBE (SUPABASE) ---
 @st.cache_resource
 def init_connection():
-    # Convertimos la URL de postgres a postgresql para que SQLAlchemy la entienda
     db_url = st.secrets["DATABASE_URL"].replace("postgres://", "postgresql://")
     return create_engine(db_url)
 
-engine = init_connection()
+try:
+    engine = init_connection()
+except Exception as e:
+    st.error("Error conectando a la base de datos. Verifica tu contraseña y enlace en los Secrets.")
+    st.stop()
 
 def inicializar_bd_completa():
     with engine.begin() as conn:
         conn.execute(text('''CREATE TABLE IF NOT EXISTS Prospectos (id SERIAL PRIMARY KEY, nombre TEXT, correo TEXT, telefono TEXT, producto TEXT, fecha_cotizacion TEXT, ejecutivo TEXT DEFAULT 'Titular (Agencia)')'''))
         conn.execute(text('''CREATE TABLE IF NOT EXISTS Clientes (rfc TEXT PRIMARY KEY, nombre TEXT, telefono TEXT, correo TEXT, fecha_nacimiento TEXT, direccion TEXT)'''))
-        # Nota: archivo_pdf ahora es BYTEA para guardar el archivo completo
         conn.execute(text('''CREATE TABLE IF NOT EXISTS Polizas (numero_poliza TEXT PRIMARY KEY, rfc_cliente TEXT, aseguradora TEXT, inicio_vigencia TEXT, fin_vigencia TEXT, archivo_pdf BYTEA, ejecutivo TEXT DEFAULT 'Titular (Agencia)')'''))
         conn.execute(text('''CREATE TABLE IF NOT EXISTS Recibos (id SERIAL PRIMARY KEY, numero_poliza TEXT, fecha_limite TEXT, monto TEXT, estado TEXT DEFAULT 'Pendiente')'''))
         conn.execute(text('''CREATE TABLE IF NOT EXISTS Ejecutivos (id SERIAL PRIMARY KEY, nombre TEXT UNIQUE)'''))
         
-        # Validar si hay ejecutivos, si no, crear el principal
         res = conn.execute(text("SELECT COUNT(*) FROM Ejecutivos")).scalar()
         if res == 0:
             conn.execute(text("INSERT INTO Ejecutivos (nombre) VALUES ('Titular (Agencia)')"))
@@ -117,7 +120,6 @@ def analizar_con_ia(texto_sucio):
         return json.loads(response.text.replace('```json', '').replace('```', '').strip())
     except: return None
 
-# Función reescrita para PostgreSQL
 def guardar_poliza_bd(datos, pdf_bytes=None, ejecutivo="Titular (Agencia)"):
     with engine.begin() as conn:
         try:
@@ -125,7 +127,6 @@ def guardar_poliza_bd(datos, pdf_bytes=None, ejecutivo="Titular (Agencia)"):
             rfc = datos.get('rfc_cliente', 'No especificado').strip()
             if not rfc or rfc == 'No especificado': rfc = f"SIN_RFC_{datetime.now().strftime('%Y%m%d%H%M%S')}"
             
-            # Guardar Cliente (UPSERT)
             conn.execute(text("""
                 INSERT INTO Clientes (rfc, nombre, telefono, correo, fecha_nacimiento, direccion) 
                 VALUES (:rfc, :nom, :tel, :cor, :fec, :dir) 
@@ -133,7 +134,6 @@ def guardar_poliza_bd(datos, pdf_bytes=None, ejecutivo="Titular (Agencia)"):
                 nombre=EXCLUDED.nombre, telefono=EXCLUDED.telefono, correo=EXCLUDED.correo, direccion=EXCLUDED.direccion
             """), {"rfc": rfc, "nom": datos.get('nombre_cliente'), "tel": datos.get('telefono'), "cor": datos.get('correo'), "fec": datos.get('fecha_nacimiento'), "dir": datos.get('direccion_completa', 'No especificada')})
             
-            # Guardar Póliza
             num_pol = datos.get('numero_poliza')
             if tipo_doc == 'Poliza':
                 conn.execute(text("""
@@ -149,7 +149,6 @@ def guardar_poliza_bd(datos, pdf_bytes=None, ejecutivo="Titular (Agencia)"):
                     ON CONFLICT (numero_poliza) DO NOTHING
                 """), {"pol": num_pol, "rfc": rfc, "aseg": datos.get('aseguradora'), "ini": datos.get('inicio_vigencia'), "fin": datos.get('fin_vigencia'), "pdf": pdf_bytes, "ejec": ejecutivo})
             
-            # Guardar Recibo
             fecha_pago = datos.get('fecha_limite_pago')
             if fecha_pago and fecha_pago.lower() not in ['no especificado', 'none', '']:
                 monto = formato_pesos(datos.get('monto_a_pagar', 'No especificado'))
@@ -158,7 +157,6 @@ def guardar_poliza_bd(datos, pdf_bytes=None, ejecutivo="Titular (Agencia)"):
                     conn.execute(text("INSERT INTO Recibos (numero_poliza, fecha_limite, monto, estado) VALUES (:pol, :fec, :mon, 'Pendiente')"), {"pol": num_pol, "fec": fecha_pago, "mon": monto})
             return tipo_doc
         except Exception as e:
-            print(f"Error DB: {e}")
             return False
 
 def generar_pdf_con_logos(df, titulo, fecha_inicio, fecha_fin):
@@ -227,7 +225,7 @@ lista_dinamica_ejecutivos = obtener_lista_ejecutivos()
 
 pestana1, pestana2, pestana3, pestana4, pestana5, pestana6, pestana7 = st.tabs([
     "🔍 Buscador Inteligente", "📄 Lector IA Masivo", "🚦 Seguimiento Prospectos", 
-    "🔔 Alertas y Cobranza", "📊 Reportes", "📥 Importador", "☁️ Estado Nube"
+    "🔔 Alertas y Cobranza", "📊 Reportes", "📥 Importador", "☁️ Respaldo Local"
 ])
 
 # ==========================================
@@ -273,14 +271,13 @@ with pestana1:
                         st.markdown("**📥 Descargar Documentos Originales:**")
                         cols_descarga = st.columns(len(df_polizas))
                         for idx, poliza in df_polizas.iterrows():
-                            # Consultar el PDF binario directamente
                             with engine.connect() as conn:
                                 pdf_data = conn.execute(text("SELECT archivo_pdf FROM Polizas WHERE numero_poliza=:pol"), {"pol": poliza['numero_poliza']}).fetchone()[0]
                             
                             with cols_descarga[idx % len(cols_descarga)]: 
                                 if pdf_data:
                                     st.download_button(label=f"📄 {poliza['numero_poliza']}", data=pdf_data, file_name=f"Doc_{poliza['numero_poliza'].replace('/','_')}.pdf", mime="application/pdf", key=f"dl_{poliza['numero_poliza']}_{idx}")
-                                else: st.caption(f"🚫 Sin PDF en base de datos")
+                                else: st.caption(f"🚫 Sin PDF")
                         
                         st.markdown("---")
                         with st.popover("➕ Cargar recibo manual"):
@@ -319,7 +316,7 @@ with pestana2:
             with st.spinner(f"Leyendo: {archivo.name}... ({i+1}/{total_archivos})"):
                 texto_crudo = extraer_texto_pdf(archivo)
                 datos_json = None
-                pdf_bytes = archivo.getvalue() # Obtenemos los bytes para guardar en la BD
+                pdf_bytes = archivo.getvalue()
                 
                 if texto_crudo and len(texto_crudo.strip()) > 20: 
                     datos_json = analizar_con_ia(texto_crudo)
@@ -337,7 +334,6 @@ with pestana2:
                         except: pass
                 
                 if datos_json:
-                    # Pasamos los bytes del PDF directamente a la base de datos
                     resultado = guardar_poliza_bd(datos_json, pdf_bytes=pdf_bytes, ejecutivo=ejecutivo_seleccionado)
                     if resultado: exitos += 1
                     else: errores += 1
@@ -348,7 +344,7 @@ with pestana2:
             st.success(f"✅ ¡Se procesaron y asignaron a {ejecutivo_seleccionado} los {exitos} documentos con éxito!")
             st.balloons()
         else:
-            st.warning(f"⚠️ {exitos} guardados exitosamente en la nube. Hubo {errores} archivos ilegibles.")
+            st.warning(f"⚠️ {exitos} guardados exitosamente. Hubo {errores} archivos ilegibles.")
 
 # ==========================================
 # PESTAÑA 3: PROSPECTOS MANUALES
@@ -420,7 +416,7 @@ with pestana4:
                 msj = f"Hola {fila['nombre']}, te recuerdo que el pago de tu póliza {fila['numero_poliza']} de {fila['aseguradora']} por {fila['monto']} vence el {fila['fecha_limite']}."
             elif 1 <= dias <= 15:
                 estados.append("🟡 Rehabilitar (Periodo de gracia)")
-                msj = f"URGENTE: Hola {fila['nombre']}, el recibo de tu póliza {fila['numero_poliza']} de {fila['aseguradora']} venció hace {dias} días. Aún estamos a tiempo de rehabilitar tu póliza."
+                msj = f"URGENTE: Hola {fila['nombre']}, el recibo de tu póliza {fila['numero_poliza']} de {fila['aseguradora']} venció hace {dias} días. Aún estamos a tiempo de rehabilitar tu póliza. Evita su cancelación."
             else:
                 estados.append("🔴 Cancelada")
                 msj = f"Hola {fila['nombre']}, tu póliza {fila['numero_poliza']} de {fila['aseguradora']} ha sido cancelada por falta de pago."
@@ -504,7 +500,6 @@ with pestana5:
                     st.download_button("📄 PDF Oficial", data=generar_pdf_con_logos(df_prosp_filtrado, f"Prospectos - {filtro_ejecutivo}", fecha_inicio, fecha_fin), file_name=f"Prospectos_{filtro_ejecutivo}.pdf", mime='application/pdf', key='p_pdf', use_container_width=True)
                 else: st.warning("Sin datos para este filtro.")
             else: st.warning("Sin prospectos.")
-    else: st.info("Selecciona fechas en el calendario.")
 
 # ==========================================
 # PESTAÑA 6: IMPORTADOR MASIVO
@@ -560,21 +555,36 @@ with pestana6:
                 except Exception as e: st.error(f"Error técnico en el archivo: {e}")
 
 # ==========================================
-# PESTAÑA 7: ESTADO NUBE (REEMPLAZA AL DRIVE)
+# PESTAÑA 7: EXPORTAR A DRIVE DEL CLIENTE (NUEVA FUNCIÓN)
 # ==========================================
 with pestana7:
-    st.markdown("### ☁️ Estado de Conexión y Seguridad")
+    st.markdown("### ☁️ Respaldo Local (Para Google Drive)")
+    st.info("Tus datos viven seguros en la nube de Supabase. Sin embargo, si deseas tener una copia física en tu computadora para subirla a tu **Google Drive personal**, utiliza este botón. Se generará un archivo ZIP con todos tus registros en formato Excel (.csv).")
     
-    st.success("✅ **SISTEMA CONECTADO A SUPABASE POSTGRESQL**")
-    
-    st.write("Tu plataforma ahora opera bajo infraestructura en la nube de grado empresarial. Esto significa que:")
-    st.markdown("""
-    * 💾 **Tus datos son inmortales:** Aunque se reinicie la aplicación, tu información no se perderá.
-    * 📑 **Los PDFs se guardan en bóveda:** Tus documentos ahora se transforman en código binario y se guardan directamente dentro de la base de datos de forma encriptada.
-    * 🔄 **Respaldos Automáticos:** Supabase realiza copias de seguridad de forma interna diariamente. ¡Ya no necesitas hacer clics manuales ni usar Google Drive!
-
-    """)
-
-
-
-
+    if st.button("📦 Generar y Descargar Respaldo Total", type="primary"):
+        with st.spinner("Empaquetando toda la base de datos..."):
+            try:
+                # Leer todas las tablas
+                df_c = pd.read_sql_query("SELECT * FROM Clientes", engine)
+                df_p = pd.read_sql_query("SELECT numero_poliza, rfc_cliente, aseguradora, inicio_vigencia, fin_vigencia, ejecutivo FROM Polizas", engine)
+                df_r = pd.read_sql_query("SELECT * FROM Recibos", engine)
+                df_pr = pd.read_sql_query("SELECT * FROM Prospectos", engine)
+                
+                # Crear ZIP en la memoria temporal
+                zip_buffer = io.BytesIO()
+                with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+                    zip_file.writestr("1_Clientes.csv", df_c.to_csv(index=False).encode('utf-8-sig'))
+                    zip_file.writestr("2_Polizas.csv", df_p.to_csv(index=False).encode('utf-8-sig'))
+                    zip_file.writestr("3_Recibos.csv", df_r.to_csv(index=False).encode('utf-8-sig'))
+                    zip_file.writestr("4_Prospectos.csv", df_pr.to_csv(index=False).encode('utf-8-sig'))
+                
+                st.success("¡Respaldo generado con éxito!")
+                st.download_button(
+                    label="📥 Guardar Archivo ZIP en mi Computadora",
+                    data=zip_buffer.getvalue(),
+                    file_name=f"Respaldo_Agentia_{datetime.now().strftime('%Y%m%d')}.zip",
+                    mime="application/zip",
+                    type="secondary"
+                )
+            except Exception as e:
+                st.error(f"Error al generar el respaldo: {e}")

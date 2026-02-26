@@ -191,7 +191,7 @@ col_tit, col_vacia, col_der = st.columns([5, 1, 2])
 
 with col_tit:
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("<h1 style='color: #0b7af0; margin-bottom: 0px;'>Sistema de Gestión Integral</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='color: #000000; margin-bottom: 0px;'>Sistema de Gestión Integral</h1>", unsafe_allow_html=True)
     st.caption("Inteligencia para vender más")
 
 with col_der:
@@ -587,4 +587,5 @@ with pestana7:
                     type="secondary"
                 )
             except Exception as e:
+
                 st.error(f"Error al generar el respaldo: {e}")

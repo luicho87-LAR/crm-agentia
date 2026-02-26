@@ -409,7 +409,7 @@ with pestana4:
         df_cobranza['Dias_Atraso'] = (pd.to_datetime(datetime.now().date()) - df_cobranza['fecha_dt']).dt.days
         df_cobranza['monto'] = df_cobranza['monto'].apply(formato_pesos)
         
-       estados = []
+        estados = []
         mensajes_wa = []
         for index, fila in df_cobranza.iterrows():
             dias = fila['Dias_Atraso']
@@ -426,7 +426,9 @@ with pestana4:
                 msj = f"Hola {fila['nombre']}, tu póliza {fila['numero_poliza']} de {fila['aseguradora']} ha sido cancelada por falta de pago."
                 
             mensajes_wa.append(f"https://wa.me/52{tel}?text={urllib.parse.quote(msj)}")
-        df_cobranza['Estatus'] = estados; df_cobranza['Aviso'] = mensajes_wa
+            
+        df_cobranza['Estatus'] = estados
+        df_cobranza['Aviso'] = mensajes_wa
         st.dataframe(df_cobranza[['nombre', 'aseguradora', 'monto', 'fecha_limite', 'ejecutivo', 'Estatus', 'Aviso']], column_config={"Aviso": st.column_config.LinkColumn("💬 Reclamar Pago")}, hide_index=True, use_container_width=True)
         
         with st.form("form_pagos"):
@@ -435,13 +437,16 @@ with pestana4:
                 opciones = df_cobranza.apply(lambda x: f"ID {x['id']} - {x['nombre']} - Póliza: {x['numero_poliza']} - {x['monto']}", axis=1).tolist()
                 recibo_sel = st.selectbox("Selecciona el recibo que el cliente ya liquidó:", opciones)
             with col_b:
-                st.write(""); st.write("")
+                st.write("")
+                st.write("")
                 if st.form_submit_button("💰 Registrar Pago", type="primary"):
                     id_recibo = recibo_sel.split(" ")[1]
                     with engine.begin() as conn:
                         conn.execute(text("UPDATE Recibos SET estado = 'Pagado' WHERE id = :id"), {"id": id_recibo})
-                    st.success("¡El pago se ha registrado exitosamente!"); st.rerun()
-    else: st.success("¡Felicidades! Tienes cartera sana, no hay recibos pendientes de cobro.")
+                    st.success("¡El pago se ha registrado exitosamente!")
+                    st.rerun()
+    else:
+        st.success("¡Felicidades! Tienes cartera sana, no hay recibos pendientes de cobro.")
 
 # ==========================================
 # PESTAÑA 5: REPORTES VIP Y COMISIONES
@@ -569,6 +574,7 @@ with pestana7:
     * 🔄 **Respaldos Automáticos:** Supabase realiza copias de seguridad de forma interna diariamente. ¡Ya no necesitas hacer clics manuales ni usar Google Drive!
 
     """)
+
 
 
 

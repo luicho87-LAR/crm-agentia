@@ -416,7 +416,7 @@ with pestana4:
            if dias <= 0: estados.append("🟢 A tiempo"); msj = f"Hola {fila['nombre']}, te recuerdo que el pago de tu póliza {fila['numero_poliza']} de {fila['aseguradora']} por {fila['monto']} vence el {fila['fecha_limite']}."
         elif 1 <= dias <= 15: estados.append("🟡 Rehabilitar (Periodo de gracia)"); msj = f"URGENTE: Hola {fila['nombre']}, el recibo de tu póliza {fila['numero_poliza']} de {fila['aseguradora']} venció hace {dias} días. Aún estamos a tiempo de rehabilitar tu póliza."
         else: estados.append("🔴 Cancelada"); msj = f"Hola {fila['nombre']}, tu póliza {fila['numero_poliza']} de {fila['aseguradora']} ha sido cancelada por falta de pago."
-            mensajes_wa.append(f"https://wa.me/52{tel}?text={urllib.parse.quote(msj)}")
+        mensajes_wa.append(f"https://wa.me/52{tel}?text={urllib.parse.quote(msj)}")
         df_cobranza['Estatus'] = estados; df_cobranza['Aviso'] = mensajes_wa
         st.dataframe(df_cobranza[['nombre', 'aseguradora', 'monto', 'fecha_limite', 'ejecutivo', 'Estatus', 'Aviso']], column_config={"Aviso": st.column_config.LinkColumn("💬 Reclamar Pago")}, hide_index=True, use_container_width=True)
         

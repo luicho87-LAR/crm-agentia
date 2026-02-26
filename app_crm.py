@@ -413,9 +413,7 @@ with pestana4:
         for index, fila in df_cobranza.iterrows():
             dias = fila['Dias_Atraso']
             tel = str(fila['telefono']).replace(' ','').replace('-','')
-           if dias <= 0:
-                estados.append("🟢 A tiempo")
-                msj = f"Hola {fila['nombre']}, te recuerdo que el pago de tu póliza {fila['numero_poliza']} de {fila['aseguradora']} por {fila['monto']} vence el {fila['fecha_limite']}."
+           if dias <= 0: estados.append("🟢 A tiempo") msj = f"Hola {fila['nombre']}, te recuerdo que el pago de tu póliza {fila['numero_poliza']} de {fila['aseguradora']} por {fila['monto']} vence el {fila['fecha_limite']}."
         elif 1 <= dias <= 15: estados.append("🟡 Rehabilitar (Periodo de gracia)"); msj = f"URGENTE: Hola {fila['nombre']}, el recibo de tu póliza {fila['numero_poliza']} de {fila['aseguradora']} venció hace {dias} días. Aún estamos a tiempo de rehabilitar tu póliza."
         else: estados.append("🔴 Cancelada"); msj = f"Hola {fila['nombre']}, tu póliza {fila['numero_poliza']} de {fila['aseguradora']} ha sido cancelada por falta de pago."
         mensajes_wa.append(f"https://wa.me/52{tel}?text={urllib.parse.quote(msj)}")
@@ -562,4 +560,5 @@ with pestana7:
     * 🔄 **Respaldos Automáticos:** Supabase realiza copias de seguridad de forma interna diariamente. ¡Ya no necesitas hacer clics manuales ni usar Google Drive!
 
     """)
+
 

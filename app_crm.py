@@ -187,8 +187,8 @@ def generar_pdf_con_logos(df, titulo, fecha_inicio, fecha_fin):
     return pdf_bytes
 
 # --- 4. DISEÑO DE LA PANTALLA WEB (ENCABEZADO) ---
-
 col_tit, col_vacia, col_der = st.columns([5, 1, 2])
+
 with col_tit:
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("<h1 style='color: #0b7af0; margin-bottom: 0px;'>Sistema de Gestión Integral</h1>", unsafe_allow_html=True)
@@ -225,7 +225,7 @@ lista_dinamica_ejecutivos = obtener_lista_ejecutivos()
 
 pestana1, pestana2, pestana3, pestana4, pestana5, pestana6, pestana7 = st.tabs([
     "🔍 Buscador Inteligente", "📄 Lector IA Masivo", "🚦 Seguimiento Prospectos", 
-    "🔔 Alertas y Cobranza", "📊 Reportes", "📥 Importador", "☁️ Respaldo Local"
+    "🔔 Alertas y Cobranza", "📊 Reportes", "📥 Importador", "☁️ Respaldo a Drive"
 ])
 
 # ==========================================
@@ -277,7 +277,7 @@ with pestana1:
                             with cols_descarga[idx % len(cols_descarga)]: 
                                 if pdf_data:
                                     st.download_button(label=f"📄 {poliza['numero_poliza']}", data=pdf_data, file_name=f"Doc_{poliza['numero_poliza'].replace('/','_')}.pdf", mime="application/pdf", key=f"dl_{poliza['numero_poliza']}_{idx}")
-                                else: st.caption(f"🚫 Sin PDF")
+                                else: st.caption(f"🚫 Sin PDF en bóveda")
                         
                         st.markdown("---")
                         with st.popover("➕ Cargar recibo manual"):
@@ -344,7 +344,7 @@ with pestana2:
             st.success(f"✅ ¡Se procesaron y asignaron a {ejecutivo_seleccionado} los {exitos} documentos con éxito!")
             st.balloons()
         else:
-            st.warning(f"⚠️ {exitos} guardados exitosamente. Hubo {errores} archivos ilegibles.")
+            st.warning(f"⚠️ {exitos} guardados exitosamente en la nube. Hubo {errores} archivos ilegibles.")
 
 # ==========================================
 # PESTAÑA 3: PROSPECTOS MANUALES
@@ -413,10 +413,9 @@ with pestana4:
             
             if dias <= 0:
                 estados.append("🟢 A tiempo")
-                msj = f"Hola {fila['nombre']}, te recuerdo que el pago de tu póliza {fila['numero_poliza']} de {fila['aseguradora']} por {fila['monto']} vence el {fila['fecha_limite']}."
-            elif 1 <= dias <= 15:
+                msj = msj = f"Hola {fila['nombre']}, te recuerdo que el pago de tu póliza {fila['numero_poliza']} de {fila['aseguradora']} por {fila['monto']} vence el {fila['fecha_limite']}."
                 estados.append("🟡 Rehabilitar (Periodo de gracia)")
-                msj = f"URGENTE: Hola {fila['nombre']}, el recibo de tu póliza {fila['numero_poliza']} de {fila['aseguradora']} venció hace {dias} días. Aún estamos a tiempo de rehabilitar tu póliza. Evita su cancelación."
+                msj = f"URGENTE: Hola {fila['nombre']}, el recibo de tu póliza {fila['numero_poliza']} de {fila['aseguradora']} venció hace {dias} días. Aún estamos a tiempo de rehabilitar tu póliza. Evita cancelaciones"
             else:
                 estados.append("🔴 Cancelada")
                 msj = f"Hola {fila['nombre']}, tu póliza {fila['numero_poliza']} de {fila['aseguradora']} ha sido cancelada por falta de pago."
@@ -500,6 +499,7 @@ with pestana5:
                     st.download_button("📄 PDF Oficial", data=generar_pdf_con_logos(df_prosp_filtrado, f"Prospectos - {filtro_ejecutivo}", fecha_inicio, fecha_fin), file_name=f"Prospectos_{filtro_ejecutivo}.pdf", mime='application/pdf', key='p_pdf', use_container_width=True)
                 else: st.warning("Sin datos para este filtro.")
             else: st.warning("Sin prospectos.")
+    else: st.info("Selecciona fechas en el calendario.")
 
 # ==========================================
 # PESTAÑA 6: IMPORTADOR MASIVO

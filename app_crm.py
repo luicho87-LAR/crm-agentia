@@ -1,0 +1,575 @@
+import streamlit as st
+import sqlite3
+import pandas as pd
+from datetime import datetime, timedelta
+import pdfplumber
+from google import genai
+import json
+import os
+import urllib.parse
+import zipfile
+from fpdf import FPDF
+import tempfile
+
+# --- 1. CONFIGURACIÓN DE INTELIGENCIA ARTIFICIAL Y PÁGINA ---
+st.set_page_config(page_title="Agentia CRM", layout="wide", page_icon="icono_agentia.png")
+
+# 🚨 ¡PEGA TU LLAVE AQUÍ ADENTRO DE LAS COMILLAS! 🚨
+API_KEY = st.secrets["GEMINI_API_KEY"]
+client = genai.Client(api_key=API_KEY)
+
+# --- ✨ INYECCIÓN DE DISEÑO PREMIUM (UI/UX) ✨ ---
+st.markdown("""
+<style>
+    .stApp { background-color: #f4f7f9; background-image: radial-gradient(circle at 50% 0%, #e0edfb 0%, #f4f7f9 40%); }
+    div[data-testid="metric-container"] { background-color: #ffffff; border: 1px solid #e1e8ed; padding: 15px 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.04); border-top: 4px solid #0b7af0; transition: transform 0.2s ease, box-shadow 0.2s ease; }
+    div[data-testid="metric-container"]:hover { transform: translateY(-3px); box-shadow: 0 8px 15px rgba(11, 122, 240, 0.1); }
+    div.stButton > button[kind="primary"] { background: linear-gradient(135deg, #0b7af0 0%, #0052a3 100%); color: white; border-radius: 8px; border: none; padding: 0.6rem 1.2rem; font-weight: 600; box-shadow: 0 4px 12px rgba(11, 122, 240, 0.3); transition: all 0.3s ease; }
+    div.stButton > button[kind="primary"]:hover { box-shadow: 0 6px 18px rgba(11, 122, 240, 0.5); transform: scale(1.02); }
+    div[data-testid="stExpander"] { background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.03); border: 1px solid #eef2f5; overflow: hidden; margin-bottom: 1rem; }
+    div[data-testid="stExpander"] details summary { background-color: #ffffff; padding: 10px; font-size: 1.05rem; color: #1e293b; }
+    button[data-baseweb="tab"] { font-size: 16px; font-weight: 600; border-radius: 8px 8px 0 0; padding: 10px 16px; margin-right: 2px; }
+    button[data-baseweb="tab"][aria-selected="true"] { background-color: #eaf3fc; color: #0b7af0; border-bottom: 3px solid #0b7af0; }
+    div[data-baseweb="input"] > div, div[data-baseweb="select"] > div { border-radius: 8px; border: 1px solid #d1d9e0; }
+    #MainMenu {visibility: hidden;} footer {visibility: hidden;}
+</style>
+""", unsafe_allow_html=True)
+
+# --- 🔐 SISTEMA DE LOGIN Y SEGURIDAD ---
+if 'autenticado' not in st.session_state:
+    st.session_state['autenticado'] = False
+
+if not st.session_state['autenticado']:
+    col_espacio1, col_login, col_espacio2 = st.columns([1, 1.5, 1])
+    with col_login:
+        st.markdown("<br><br><br>", unsafe_allow_html=True)
+        
+        # LOGO Y ESLOGAN CENTRADOS EN EL LOGIN
+        c_izq, c_centro_img, c_der = st.columns([1, 2, 1])
+        with c_centro_img:
+            if os.path.exists("logo_crm.png"):
+                st.image("logo_crm.png", use_container_width=True)
+        st.markdown("""<h4 style='text-align: center; color: #000000; font-weight: 600; letter-spacing: 1px; margin-top: -10px; margin-bottom: 30px;'>Inteligencia para vender más</h4>""", unsafe_allow_html=True)
+            
+        st.markdown("<h5 style='text-align: center;'>🔐 Acceso Corporativo</h5>", unsafe_allow_html=True)
+        with st.form("form_login"):
+            usuario = st.text_input("Usuario", placeholder="Ej. admin")
+            contrasena = st.text_input("Contraseña", type="password", placeholder="••••••••")
+            boton_entrar = st.form_submit_button("Iniciar Sesión ➜", type="primary", use_container_width=True)
+            if boton_entrar:
+                # RECUERDA CAMBIAR ESTO ANTES DE ENTREGAR EL SISTEMA
+                if usuario == "admin" and contrasena == "Agentia2026":
+                    st.session_state['autenticado'] = True
+                    st.rerun()
+                else: st.error("Usuario o contraseña incorrectos.")
+    st.stop()
+# ----------------------------------------
+
+# --- 2. PREPARACIÓN DE LA BASE DE DATOS Y CARPETAS ---
+os.makedirs("Polizas_Guardadas", exist_ok=True)
+
+def inicializar_bd_completa():
+    conexion = sqlite3.connect("crm_seguros.db")
+    cursor = conexion.cursor()
+    cursor.execute('''CREATE TABLE IF NOT EXISTS Prospectos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT, correo TEXT, telefono TEXT, producto TEXT, fecha_cotizacion TEXT)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS Clientes (rfc TEXT PRIMARY KEY, nombre TEXT, telefono TEXT, correo TEXT, fecha_nacimiento TEXT, direccion TEXT)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS Polizas (numero_poliza TEXT PRIMARY KEY, rfc_cliente TEXT, aseguradora TEXT, inicio_vigencia TEXT, fin_vigencia TEXT, ruta_archivo TEXT, FOREIGN KEY (rfc_cliente) REFERENCES Clientes (rfc))''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS Recibos (id INTEGER PRIMARY KEY AUTOINCREMENT, numero_poliza TEXT, fecha_limite TEXT, monto TEXT, estado TEXT DEFAULT 'Pendiente', FOREIGN KEY (numero_poliza) REFERENCES Polizas (numero_poliza))''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS Ejecutivos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT UNIQUE)''')
+    
+    try: cursor.execute("ALTER TABLE Clientes ADD COLUMN direccion TEXT")
+    except: pass
+    try: cursor.execute("ALTER TABLE Polizas ADD COLUMN ruta_archivo TEXT")
+    except: pass
+    try: cursor.execute("ALTER TABLE Polizas ADD COLUMN ejecutivo TEXT DEFAULT 'Titular (Agencia)'")
+    except: pass
+    try: cursor.execute("ALTER TABLE Prospectos ADD COLUMN ejecutivo TEXT DEFAULT 'Titular (Agencia)'")
+    except: pass
+    
+    cursor.execute("SELECT COUNT(*) FROM Ejecutivos")
+    if cursor.fetchone()[0] == 0:
+        cursor.execute("INSERT INTO Ejecutivos (nombre) VALUES ('Titular (Agencia)')")
+        
+    conexion.commit(); conexion.close()
+
+inicializar_bd_completa()
+
+# --- 3. FUNCIONES DEL SISTEMA ---
+def obtener_lista_ejecutivos():
+    conexion = sqlite3.connect("crm_seguros.db")
+    df = pd.read_sql_query("SELECT nombre FROM Ejecutivos ORDER BY id", conexion)
+    conexion.close()
+    return df['nombre'].tolist()
+
+def formato_pesos(valor):
+    v = str(valor).strip()
+    if v.lower() in ['nan', 'none', 'no especificado', 'no especificada', '']: return "No especificado"
+    if v.startswith('$'): return v
+    try:
+        num = float(v.replace(',', '').replace(' ', ''))
+        return f"${num:,.2f}"
+    except: return f"${v}"
+
+def extraer_texto_pdf(archivo_pdf):
+    texto_completo = ""
+    try:
+        with pdfplumber.open(archivo_pdf) as pdf:
+            for pagina in pdf.pages:
+                texto_extraido = pagina.extract_text()
+                if texto_extraido: texto_completo += texto_extraido + "\n"
+        return texto_completo
+    except: return None
+
+def analizar_con_ia(texto_sucio):
+    instruccion = """Eres un experto en seguros. 1. Identifica "tipo_documento" ("Poliza" o "Recibo"). 2. Extrae: aseguradora, numero_poliza, nombre_cliente, rfc_cliente, telefono, correo, inicio_vigencia, fin_vigencia, direccion_completa. 3. Para cobranza extrae: fecha_limite_pago, monto_a_pagar. Calcula "fecha_nacimiento" desde RFC. Si algún dato falta, pon "No especificado". Formato de fechas: DD/MM/AAAA. Devuelve SOLO JSON válido sin markdown."""
+    try:
+        response = client.models.generate_content(model='gemini-2.5-flash', contents=instruccion)
+        return json.loads(response.text.replace('```json', '').replace('```', '').strip())
+    except: return None
+
+def guardar_poliza_bd(datos, ruta_pdf=None, ejecutivo="Titular (Agencia)"):
+    conexion = sqlite3.connect("crm_seguros.db")
+    cursor = conexion.cursor()
+    try:
+        tipo_doc = datos.get('tipo_documento', 'Poliza')
+        direccion = datos.get('direccion_completa', 'No especificada')
+        if datos.get('rfc_cliente') and datos.get('rfc_cliente') not in ['No especificado', 'No especificada']:
+            cursor.execute('''INSERT OR REPLACE INTO Clientes (rfc, nombre, telefono, correo, fecha_nacimiento, direccion) VALUES (?, ?, ?, ?, ?, ?)''', (datos.get('rfc_cliente'), datos.get('nombre_cliente'), datos.get('telefono'), datos.get('correo'), datos.get('fecha_nacimiento'), direccion))
+        
+        if tipo_doc == 'Poliza':
+            cursor.execute('''INSERT OR REPLACE INTO Polizas (numero_poliza, rfc_cliente, aseguradora, inicio_vigencia, fin_vigencia, ruta_archivo, ejecutivo) VALUES (?, ?, ?, ?, ?, ?, ?)''', (datos.get('numero_poliza'), datos.get('rfc_cliente'), datos.get('aseguradora'), datos.get('inicio_vigencia'), datos.get('fin_vigencia'), ruta_pdf, ejecutivo))
+        else:
+            cursor.execute('''INSERT OR IGNORE INTO Polizas (numero_poliza, rfc_cliente, aseguradora, inicio_vigencia, fin_vigencia, ruta_archivo, ejecutivo) VALUES (?, ?, ?, ?, ?, ?, ?)''', (datos.get('numero_poliza'), datos.get('rfc_cliente'), aseguradora, inicio_vigencia, fin_vigencia, ruta_pdf, ejecutivo))
+        
+        fecha_pago = datos.get('fecha_limite_pago')
+        if fecha_pago and fecha_pago not in ['No especificado', 'No especificada']:
+            monto = formato_pesos(datos.get('monto_a_pagar', 'No especificado'))
+            cursor.execute("SELECT id FROM Recibos WHERE numero_poliza=? AND fecha_limite=?", (datos.get('numero_poliza'), fecha_pago))
+            if not cursor.fetchone():
+                cursor.execute("INSERT INTO Recibos (numero_poliza, fecha_limite, monto, estado) VALUES (?, ?, ?, 'Pendiente')", (datos.get('numero_poliza'), fecha_pago, monto))
+        conexion.commit()
+        return tipo_doc
+    except Exception as e: return False
+    finally: conexion.close()
+
+def generar_pdf_con_logos(df, titulo, fecha_inicio, fecha_fin):
+    pdf = FPDF(orientation='L', unit='mm', format='A4')
+    pdf.add_page()
+    if os.path.exists("logo_agencia.png"): pdf.image("logo_agencia.png", 10, 8, 30)
+    elif os.path.exists("logo_agencia.jpg"): pdf.image("logo_agencia.jpg", 10, 8, 30)
+    if os.path.exists("logo_crm.png"): pdf.image("logo_crm.png", 250, 8, 30)
+    
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(0, 10, titulo, ln=1, align='C')
+    pdf.set_font("Arial", "", 11)
+    pdf.cell(0, 8, f"Periodo analizado: {fecha_inicio.strftime('%d/%m/%Y')} al {fecha_fin.strftime('%d/%m/%Y')}", ln=1, align='C')
+    pdf.ln(10)
+    
+    if not df.empty:
+        pdf.set_font("Arial", "B", 9)
+        ancho_col = 277 / len(df.columns)
+        for col in df.columns: pdf.cell(ancho_col, 8, str(col).encode('latin-1', 'replace').decode('latin-1')[:20], border=1, align='C')
+        pdf.ln()
+        pdf.set_font("Arial", "", 8)
+        for index, fila in df.iterrows():
+            for item in fila: pdf.cell(ancho_col, 8, str(item).encode('latin-1', 'replace').decode('latin-1')[:25], border=1, align='C')
+            pdf.ln()
+            
+    fd, temp_path = tempfile.mkstemp(suffix=".pdf")
+    os.close(fd) 
+    pdf.output(temp_path)
+    with open(temp_path, "rb") as f: pdf_bytes = f.read()
+    try: os.remove(temp_path)
+    except Exception: pass 
+    return pdf_bytes
+
+# --- 4. DISEÑO DE LA PANTALLA WEB (NUEVO ENCABEZADO) ---
+
+# COLUMNA IZQUIERDA (TÍTULO) Y COLUMNA DERECHA (LOGO + MENÚ DE CONFIGURACIÓN)
+col_tit, col_vacia, col_der = st.columns([5, 1, 2])
+
+with col_tit:
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("<h1 style='color: #000000; margin-bottom: 0px;'>Sistema de Gestión Integral</h1>", unsafe_allow_html=True)
+    st.caption("Inteligencia para vender más")
+
+with col_der:
+    if os.path.exists("logo_crm.png"):
+        st.image("logo_crm.png", use_container_width=True)
+    
+    # ¡NUEVO! Panel flotante de configuración (Reemplaza a la pestaña 8)
+    with st.popover("⚙️ Configuración del Equipo", use_container_width=True):
+        st.markdown("#### 👤 Dar de alta a un nuevo Ejecutivo")
+        with st.form("form_nuevo_ejecutivo", clear_on_submit=True):
+            nuevo_nombre = st.text_input("Nombre completo:")
+            if st.form_submit_button("➕ Agregar al Equipo", type="primary"):
+                if nuevo_nombre:
+                    try:
+                        conexion = sqlite3.connect("crm_seguros.db")
+                        conexion.execute("INSERT INTO Ejecutivos (nombre) VALUES (?)", (nuevo_nombre.strip(),))
+                        conexion.commit(); conexion.close()
+                        st.success(f"¡{nuevo_nombre} agregado!")
+                        st.rerun() 
+                    except sqlite3.IntegrityError:
+                        st.error("Este nombre ya está registrado.")
+                else:
+                    st.warning("El campo no puede estar vacío.")
+                    
+        st.markdown("---")
+        st.markdown("#### 📋 Directorio Actual")
+        conexion = sqlite3.connect("crm_seguros.db")
+        df_equipo = pd.read_sql_query("SELECT id as ID, nombre as Nombre FROM Ejecutivos ORDER BY id", conexion)
+        conexion.close()
+        st.dataframe(df_equipo, hide_index=True, use_container_width=True)
+
+st.markdown("---")
+
+lista_dinamica_ejecutivos = obtener_lista_ejecutivos()
+
+# ¡AHORA SOLO SON 7 PESTAÑAS OPERATIVAS!
+pestana1, pestana2, pestana3, pestana4, pestana5, pestana6, pestana7 = st.tabs([
+    "🔍 Buscador Inteligente", "📄 Lector IA Masivo", "🚦 Seguimiento Prospectos", 
+    "🔔 Alertas y Cobranza", "📊 Reportes", "📥 Importador", "☁️ Nube"
+])
+
+# ==========================================
+# PESTAÑA 1: BUSCADOR VIP 
+# ==========================================
+with pestana1:
+    st.markdown("### 📇 Archivo Digital de Clientes")
+    conexion = sqlite3.connect("crm_seguros.db")
+    total_clientes = pd.read_sql_query("SELECT COUNT(*) FROM Clientes", conexion).iloc[0,0]
+    total_polizas = pd.read_sql_query("SELECT COUNT(*) FROM Polizas", conexion).iloc[0,0]
+    col_m1, col_m2, col_m3 = st.columns(3)
+    col_m1.metric("👥 Clientes en Cartera", total_clientes)
+    col_m2.metric("📑 Pólizas Activas", total_polizas)
+    col_m3.metric("📅 Actualización", datetime.now().strftime('%d/%m/%Y'))
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    busqueda = st.text_input("🔍 Escribe el Nombre o RFC del cliente para abrir su expediente:", placeholder="Ej. Luis Alberto...")
+    if busqueda:
+        df_clientes = pd.read_sql_query("SELECT * FROM Clientes WHERE nombre LIKE ? OR rfc LIKE ?", conexion, params=('%'+busqueda+'%', '%'+busqueda+'%'))
+        if not df_clientes.empty:
+            for index, cliente in df_clientes.iterrows():
+                with st.expander(f"👤 {cliente['nombre']} (RFC: {cliente['rfc']})", expanded=True):
+                    col_a, col_b, col_c = st.columns(3)
+                    col_a.write(f"**📞 Teléfono:** {cliente['telefono']}")
+                    col_b.write(f"**✉️ Correo:** {cliente['correo']}")
+                    col_c.write(f"**🎂 Nacimiento:** {cliente['fecha_nacimiento']}")
+                    st.write(f"**📍 Dirección:** {cliente['direccion']}")
+                    
+                    with st.popover("✏️ Editar perfil"):
+                        with st.form(f"form_editar_{cliente['rfc']}"):
+                            nuevo_tel = st.text_input("Teléfono", value=cliente['telefono'] if cliente['telefono'] != "No especificado" else "")
+                            nuevo_correo = st.text_input("Correo", value=cliente['correo'] if cliente['correo'] != "No especificado" else "")
+                            nueva_dir = st.text_input("Dirección", value=cliente['direccion'] if cliente['direccion'] != "No especificada" else "")
+                            if st.form_submit_button("Guardar Cambios"):
+                                conexion.cursor().execute("UPDATE Clientes SET telefono=?, correo=?, direccion=? WHERE rfc=?", (nuevo_tel or "No especificado", nuevo_correo or "No especificado", nueva_dir or "No especificada", cliente['rfc']))
+                                conexion.commit(); st.success("¡Actualizado!"); st.rerun()
+
+                    st.markdown("#### 📑 Pólizas Activas")
+                    df_polizas = pd.read_sql_query(f"SELECT aseguradora, numero_poliza, inicio_vigencia, fin_vigencia, ejecutivo, ruta_archivo FROM Polizas WHERE rfc_cliente = '{cliente['rfc']}'", conexion)
+                    if not df_polizas.empty:
+                        st.dataframe(df_polizas[['aseguradora', 'numero_poliza', 'inicio_vigencia', 'fin_vigencia', 'ejecutivo']], use_container_width=True, hide_index=True)
+                        st.markdown("**📥 Descargar Documentos Originales:**")
+                        cols_descarga = st.columns(len(df_polizas))
+                        for idx, poliza in df_polizas.iterrows():
+                            ruta = poliza['ruta_archivo']
+                            with cols_descarga[idx % len(cols_descarga)]: 
+                                if ruta and pd.notna(ruta) and os.path.exists(ruta):
+                                    with open(ruta, "rb") as pdf_file:
+                                        st.download_button(label=f"📄 {poliza['numero_poliza']}", data=pdf_file, file_name=f"Doc_{poliza['numero_poliza'].replace('/','_')}.pdf", mime="application/pdf", key=f"dl_{poliza['numero_poliza']}_{idx}")
+                                else: st.caption(f"🚫 Sin PDF")
+                        
+                        st.markdown("---")
+                        with st.popover("➕ Cargar recibo manual"):
+                            with st.form(f"form_recibo_{cliente['rfc']}"):
+                                poliza_sel = st.selectbox("Selecciona la póliza", df_polizas['numero_poliza'].tolist())
+                                monto_recibo = st.text_input("Monto a pagar (Ej. 1500)")
+                                fecha_recibo = st.date_input("Fecha límite de pago")
+                                if st.form_submit_button("Guardar Recibo"):
+                                    monto_limpio = formato_pesos(monto_recibo)
+                                    conexion.cursor().execute("INSERT INTO Recibos (numero_poliza, fecha_limite, monto, estado) VALUES (?, ?, ?, 'Pendiente')", (poliza_sel, fecha_recibo.strftime("%d/%m/%Y"), monto_limpio))
+                                    conexion.commit(); st.success("Recibo agregado"); st.rerun()
+                    else: st.warning("Este cliente no tiene pólizas registradas.")
+        else:
+            st.info("No se encontró ningún cliente con esos datos.")
+    conexion.close()
+
+# ==========================================
+# PESTAÑA 2: LECTOR IA MASIVO
+# ==========================================
+with pestana2:
+    st.markdown("### 🧠 Motor de Extracción IA")
+    st.write("1️⃣ **Selecciona a quién le pertenecen las pólizas que vas a subir:**")
+    ejecutivo_seleccionado = st.selectbox("Asignar producción a:", lista_dinamica_ejecutivos)
+    
+    st.write("2️⃣ **Arrastra los PDFs (Pólizas y Recibos):**")
+    archivos_subidos = st.file_uploader("Arrastra tus archivos aquí...", type=["pdf"], accept_multiple_files=True)
+    
+    if archivos_subidos and st.button("🚀 Iniciar Procesamiento Automático", type="primary"):
+        total_archivos = len(archivos_subidos)
+        st.info(f"Analizando {total_archivos} documento(s) para {ejecutivo_seleccionado}...")
+        barra_progreso = st.progress(0)
+        exitos = 0; errores = 0
+        
+        for i, archivo in enumerate(archivos_subidos):
+            with st.spinner(f"Leyendo: {archivo.name}... ({i+1}/{total_archivos})"):
+                texto_crudo = extraer_texto_pdf(archivo)
+                datos_json = None
+                if texto_crudo and len(texto_crudo.strip()) > 20: 
+                    datos_json = analizar_con_ia(texto_crudo)
+                else:
+                    ruta_temp = f"temp_{i}.pdf"
+                    with open(ruta_temp, "wb") as f: f.write(archivo.getvalue())
+                    try:
+                        archivo_gemini = client.files.upload(file=ruta_temp)
+                        instruccion_vision = """Eres experto en seguros. 1. Identifica "tipo_documento" ("Poliza" o "Recibo"). 2. Extrae: aseguradora, numero_poliza, nombre_cliente, rfc_cliente, telefono, correo, inicio_vigencia, fin_vigencia, direccion_completa, fecha_limite_pago, monto_a_pagar. Formato DD/MM/AAAA. Devuelve SOLO JSON válido."""
+                        response = client.models.generate_content(model='gemini-2.5-flash', contents=[archivo_gemini, instruccion_vision])
+                        datos_json = json.loads(response.text.replace('```json', '').replace('```', '').strip())
+                    except: datos_json = None
+                    if os.path.exists(ruta_temp): 
+                        try: os.remove(ruta_temp)
+                        except: pass
+                
+                if datos_json:
+                    nombre_limpio = datos_json.get('numero_poliza', f'SinNumero_{i}').replace('/', '_').replace('\\', '_')
+                    tipo = datos_json.get('tipo_documento', 'Poliza')
+                    ruta_guardado = f"Polizas_Guardadas/{tipo}_{nombre_limpio}.pdf"
+                    with open(ruta_guardado, "wb") as f: f.write(archivo.getvalue())
+                    
+                    resultado = guardar_poliza_bd(datos_json, ruta_pdf=ruta_guardado, ejecutivo=ejecutivo_seleccionado)
+                    if resultado: exitos += 1
+                    else: errores += 1
+                else: errores += 1
+            barra_progreso.progress((i + 1) / total_archivos)
+            
+        if errores == 0:
+            st.success(f"✅ ¡Se procesaron y asignaron a {ejecutivo_seleccionado} los {exitos} documentos con éxito!")
+            st.balloons()
+        else:
+            st.warning(f"⚠️ {exitos} guardados exitosamente. Hubo {errores} archivos que no se pudieron leer.")
+
+# ==========================================
+# PESTAÑA 3: PROSPECTOS MANUALES
+# ==========================================
+with pestana3:
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        st.markdown("### 📝 Registrar Cotización")
+        with st.form("form_prospectos", clear_on_submit=True):
+            nombre = st.text_input("Nombre del prospecto")
+            correo = st.text_input("Correo electrónico")
+            telefono = st.text_input("Teléfono")
+            producto = st.selectbox("Ramo cotizado", ["Autos", "Gastos Médicos Mayores", "Vida", "Daños Empresariales", "Hogar"])
+            fecha_cotizacion = st.date_input("Fecha de cotización")
+            ejecutivo_prospecto = st.selectbox("Ejecutivo / Sub-agente a cargo", lista_dinamica_ejecutivos)
+            if st.form_submit_button("Guardar Prospecto", type="primary"):
+                if nombre and telefono:
+                    conexion = sqlite3.connect("crm_seguros.db")
+                    conexion.execute('INSERT INTO Prospectos (nombre, correo, telefono, producto, fecha_cotizacion, ejecutivo) VALUES (?, ?, ?, ?, ?, ?)', (nombre, correo, telefono, producto, fecha_cotizacion.strftime("%Y-%m-%d"), ejecutivo_prospecto))
+                    conexion.commit(); conexion.close()
+                    st.success("¡Guardado!")
+                    st.rerun()
+                else: st.error("Ingresa nombre y teléfono.")
+    with col2:
+        st.markdown("### 🚦 Embudo de Ventas")
+        conexion = sqlite3.connect("crm_seguros.db")
+        df_prospectos = pd.read_sql_query("SELECT nombre, telefono, producto, fecha_cotizacion, ejecutivo FROM Prospectos", conexion)
+        conexion.close()
+        if not df_prospectos.empty:
+            df_prospectos['fecha_cotizacion'] = pd.to_datetime(df_prospectos['fecha_cotizacion'])
+            df_prospectos['Días'] = (pd.to_datetime(datetime.now().date()) - df_prospectos['fecha_cotizacion']).dt.days
+            def aplicar_semaforo(valor):
+                if valor <= 5: return 'background-color: #d4edda; color: #155724; font-weight: bold;'
+                elif valor <= 10: return 'background-color: #fff3cd; color: #856404; font-weight: bold;'
+                else: return 'background-color: #f8d7da; color: #721c24; font-weight: bold;'
+            tabla_coloreada = df_prospectos.style.map(aplicar_semaforo, subset=['Días'])
+            df_prospectos['fecha_cotizacion'] = df_prospectos['fecha_cotizacion'].dt.strftime('%d/%m/%Y')
+            st.dataframe(tabla_coloreada, use_container_width=True, hide_index=True)
+
+# ==========================================
+# PESTAÑA 4: ALERTAS Y COBRANZA
+# ==========================================
+with pestana4:
+    conexion = sqlite3.connect("crm_seguros.db")
+    st.markdown("### 🔄 Próximas Renovaciones (Alerta 30 días)")
+    df_alertas = pd.read_sql_query("SELECT c.nombre, c.telefono, p.aseguradora, p.numero_poliza, p.fin_vigencia, p.ejecutivo FROM Polizas p JOIN Clientes c ON p.rfc_cliente = c.rfc", conexion)
+    if not df_alertas.empty:
+        df_alertas['fin_vigencia_dt'] = pd.to_datetime(df_alertas['fin_vigencia'], format='%d/%m/%Y', errors='coerce')
+        df_alertas['Días Restantes'] = (df_alertas['fin_vigencia_dt'] - pd.to_datetime(datetime.now().date())).dt.days
+        vencimientos = df_alertas[(df_alertas['Días Restantes'] <= 30) & (df_alertas['Días Restantes'] >= -5)].copy()
+        if not vencimientos.empty:
+            vencimientos['Aviso Renovación'] = [f"https://wa.me/52{str(tel).replace(' ','').replace('-','')}?text={urllib.parse.quote('Hola, te recuerdo que tu póliza vence pronto. ¿Te ayudo a renovarla?')}" for tel in vencimientos['telefono']]
+            st.dataframe(vencimientos[['nombre', 'aseguradora', 'fin_vigencia', 'ejecutivo', 'Días Restantes', 'Aviso Renovación']], column_config={"Aviso Renovación": st.column_config.LinkColumn("💬 Enviar WhatsApp")}, hide_index=True, use_container_width=True)
+        else: st.success("Todo tranquilo. No hay renovaciones urgentes.")
+    
+    st.markdown("---")
+    st.markdown("### 💰 Control de Cobranza (Recibos Fraccionados)")
+    df_cobranza = pd.read_sql_query("SELECT r.id, c.nombre, c.telefono, p.aseguradora, r.numero_poliza, r.monto, r.fecha_limite, p.ejecutivo FROM Recibos r JOIN Polizas p ON r.numero_poliza = p.numero_poliza JOIN Clientes c ON p.rfc_cliente = c.rfc WHERE r.estado = 'Pendiente'", conexion)
+    if not df_cobranza.empty:
+        df_cobranza['fecha_dt'] = pd.to_datetime(df_cobranza['fecha_limite'], format='%d/%m/%Y', errors='coerce')
+        df_cobranza['Dias_Atraso'] = (pd.to_datetime(datetime.now().date()) - df_cobranza['fecha_dt']).dt.days
+        df_cobranza['monto'] = df_cobranza['monto'].apply(formato_pesos)
+        
+        estados = []; mensajes_wa = []
+        for index, fila in df_cobranza.iterrows():
+            dias = fila['Dias_Atraso']
+            tel = str(fila['telefono']).replace(' ','').replace('-','')
+            if dias <= 0: estados.append("🟢 A tiempo"); msj = f"Hola {fila['nombre']}, te recuerdo tu pago de {fila['aseguradora']} por {fila['monto']} que vence el {fila['fecha_limite']}."
+            elif 1 <= dias <= 15: estados.append("🟡 Rehabilitar (Periodo de gracia)"); msj = f"URGENTE: Hola {fila['nombre']}, tu recibo de {fila['aseguradora']} venció hace {dias} días. Aún estamos a tiempo de rehabilitar tu póliza."
+            else: estados.append("🔴 Cancelada"); msj = f"Hola {fila['nombre']}, tu póliza de {fila['aseguradora']} ha sido cancelada por falta de pago."
+            mensajes_wa.append(f"https://wa.me/52{tel}?text={urllib.parse.quote(msj)}")
+        df_cobranza['Estatus'] = estados; df_cobranza['Aviso'] = mensajes_wa
+        st.dataframe(df_cobranza[['nombre', 'aseguradora', 'monto', 'fecha_limite', 'ejecutivo', 'Estatus', 'Aviso']], column_config={"Aviso": st.column_config.LinkColumn("💬 Reclamar Pago")}, hide_index=True, use_container_width=True)
+        
+        with st.form("form_pagos"):
+            col_a, col_b = st.columns([3, 1])
+            with col_a:
+                opciones = df_cobranza.apply(lambda x: f"ID {x['id']} - {x['nombre']} - Póliza: {x['numero_poliza']} - {x['monto']}", axis=1).tolist()
+                recibo_sel = st.selectbox("Selecciona el recibo que el cliente ya liquidó:", opciones)
+            with col_b:
+                st.write(""); st.write("")
+                if st.form_submit_button("💰 Registrar Pago", type="primary"):
+                    id_recibo = recibo_sel.split(" ")[1]
+                    conexion.cursor().execute("UPDATE Recibos SET estado = 'Pagado' WHERE id = ?", (id_recibo,))
+                    conexion.commit(); st.success("¡El pago se ha registrado exitosamente!"); st.rerun()
+    else: st.success("¡Felicidades! Tienes cartera sana, no hay recibos pendientes de cobro.")
+    conexion.close()
+
+# ==========================================
+# PESTAÑA 5: REPORTES VIP Y COMISIONES
+# ==========================================
+with pestana5:
+    st.markdown("### 📊 Generador de Reportes Gerenciales y Comisiones")
+    col_f1, col_f2 = st.columns(2)
+    with col_f1:
+        rango_fechas = st.date_input("🗓️ Filtra el periodo de análisis:", value=(datetime.now().date().replace(day=1), datetime.now().date()), format="DD/MM/YYYY")
+    with col_f2:
+        opciones_filtro = ["Todos los Ejecutivos"] + lista_dinamica_ejecutivos
+        filtro_ejecutivo = st.selectbox("👤 Filtrar por Sub-agente (Comisiones):", opciones_filtro)
+        
+    if len(rango_fechas) == 2:
+        fecha_inicio, fecha_fin = rango_fechas
+        st.success(f"Mostrando datos del **{fecha_inicio.strftime('%d/%m/%Y')}** al **{fecha_fin.strftime('%d/%m/%Y')}** para **{filtro_ejecutivo}**")
+        conexion = sqlite3.connect("crm_seguros.db")
+        col_r1, col_r2, col_r3 = st.columns(3)
+        
+        with col_r1:
+            st.info("📈 **Ventas (Nuevas Pólizas)**")
+            df_ventas = pd.read_sql_query("SELECT c.nombre as Cliente, p.aseguradora as Aseguradora, p.numero_poliza as Poliza, p.inicio_vigencia as Inicio, p.ejecutivo as Ejecutivo FROM Polizas p JOIN Clientes c ON p.rfc_cliente = c.rfc", conexion)
+            if not df_ventas.empty:
+                df_ventas['fecha_dt'] = pd.to_datetime(df_ventas['Inicio'], format='%d/%m/%Y', errors='coerce')
+                df_ventas_filtrado = df_ventas.loc[(df_ventas['fecha_dt'].dt.date >= fecha_inicio) & (df_ventas['fecha_dt'].dt.date <= fecha_fin)].drop(columns=['fecha_dt'])
+                if filtro_ejecutivo != "Todos los Ejecutivos": df_ventas_filtrado = df_ventas_filtrado[df_ventas_filtrado['Ejecutivo'] == filtro_ejecutivo]
+                if not df_ventas_filtrado.empty:
+                    st.download_button("📥 Excel (.csv)", data=df_ventas_filtrado.to_csv(index=False).encode('utf-8-sig'), file_name=f"Ventas_{filtro_ejecutivo}.csv", mime='text/csv', key='v_csv', use_container_width=True)
+                    st.download_button("📄 PDF Oficial", data=generar_pdf_con_logos(df_ventas_filtrado, f"Ventas Nuevas - {filtro_ejecutivo}", fecha_inicio, fecha_fin), file_name=f"Ventas_{filtro_ejecutivo}.pdf", mime='application/pdf', key='v_pdf', use_container_width=True)
+                else: st.warning("Sin datos para este filtro.")
+            else: st.warning("Sin pólizas.")
+            
+        with col_r2:
+            st.info("💰 **Historial de Cobranza**")
+            df_cob = pd.read_sql_query("SELECT c.nombre as Cliente, p.aseguradora as Aseguradora, r.monto as Monto, r.fecha_limite as Limite, r.estado as Estatus, p.ejecutivo as Ejecutivo FROM Recibos r JOIN Polizas p ON r.numero_poliza = p.numero_poliza JOIN Clientes c ON p.rfc_cliente = c.rfc", conexion)
+            if not df_cob.empty:
+                df_cob['fecha_dt'] = pd.to_datetime(df_cob['Limite'], format='%d/%m/%Y', errors='coerce')
+                df_cob_filtrado = df_cob.loc[(df_cob['fecha_dt'].dt.date >= fecha_inicio) & (df_cob['fecha_dt'].dt.date <= fecha_fin)].drop(columns=['fecha_dt'])
+                if filtro_ejecutivo != "Todos los Ejecutivos": df_cob_filtrado = df_cob_filtrado[df_cob_filtrado['Ejecutivo'] == filtro_ejecutivo]
+                if 'Monto' in df_cob_filtrado.columns: df_cob_filtrado['Monto'] = df_cob_filtrado['Monto'].apply(formato_pesos)
+                if not df_cob_filtrado.empty:
+                    st.download_button("📥 Excel (.csv)", data=df_cob_filtrado.to_csv(index=False).encode('utf-8-sig'), file_name=f"Cobranza_{filtro_ejecutivo}.csv", mime='text/csv', key='c_csv', use_container_width=True)
+                    st.download_button("📄 PDF Oficial", data=generar_pdf_con_logos(df_cob_filtrado, f"Cobranza - {filtro_ejecutivo}", fecha_inicio, fecha_fin), file_name=f"Cobranza_{filtro_ejecutivo}.pdf", mime='application/pdf', key='c_pdf', use_container_width=True)
+                else: st.warning("Sin datos para este filtro.")
+            else: st.warning("Sin recibos.")
+            
+        with col_r3:
+            st.info("🎯 **Efectividad Prospectos**")
+            df_prosp = pd.read_sql_query("SELECT nombre as Prospecto, producto as Producto, fecha_cotizacion as Fecha, ejecutivo as Ejecutivo FROM Prospectos", conexion)
+            if not df_prosp.empty:
+                df_prosp['fecha_dt'] = pd.to_datetime(df_prosp['Fecha'], format='%Y-%m-%d', errors='coerce')
+                df_prosp_filtrado = df_prosp.loc[(df_prosp['fecha_dt'].dt.date >= fecha_inicio) & (df_prosp['fecha_dt'].dt.date <= fecha_fin)].drop(columns=['fecha_dt'])
+                if filtro_ejecutivo != "Todos los Ejecutivos": df_prosp_filtrado = df_prosp_filtrado[df_prosp_filtrado['Ejecutivo'] == filtro_ejecutivo]
+                if not df_prosp_filtrado.empty:
+                    st.download_button("📥 Excel (.csv)", data=df_prosp_filtrado.to_csv(index=False).encode('utf-8-sig'), file_name=f"Prospectos_{filtro_ejecutivo}.csv", mime='text/csv', key='p_csv', use_container_width=True)
+                    st.download_button("📄 PDF Oficial", data=generar_pdf_con_logos(df_prosp_filtrado, f"Prospectos - {filtro_ejecutivo}", fecha_inicio, fecha_fin), file_name=f"Prospectos_{filtro_ejecutivo}.pdf", mime='application/pdf', key='p_pdf', use_container_width=True)
+                else: st.warning("Sin datos para este filtro.")
+            else: st.warning("Sin prospectos.")
+        conexion.close()
+    else: st.info("Selecciona fechas en el calendario.")
+
+# ==========================================
+# PESTAÑA 6: IMPORTADOR MASIVO
+# ==========================================
+with pestana6:
+    st.markdown("### 📥 Migración de Cartera (Excel/CSV)")
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.markdown("##### 1. Descarga el formato base")
+        df_plantilla = pd.DataFrame(columns=['Nombre_Completo', 'RFC', 'Telefono', 'Correo', 'Direccion', 'Aseguradora', 'Numero_Poliza', 'Inicio_Vigencia_DD/MM/AAAA', 'Fin_Vigencia_DD/MM/AAAA', 'Ejecutivo'])
+        st.download_button(label="📥 Descargar Plantilla.csv", data=df_plantilla.to_csv(index=False).encode('utf-8-sig'), file_name="Plantilla_Agentia.csv", mime='text/csv', type="primary")
+        
+    with col_b:
+        st.markdown("##### 2. Sube tus datos")
+        archivo_importar = st.file_uploader("Sube tu archivo lleno (.csv o .xlsx)", type=["csv", "xlsx"])
+        if archivo_importar and st.button("🚀 Iniciar Carga a la Base de Datos", type="primary"):
+            with st.spinner("Sincronizando registros..."):
+                try:
+                    df_import = pd.read_csv(archivo_importar) if archivo_importar.name.endswith('.csv') else pd.read_excel(archivo_importar)
+                    conexion = sqlite3.connect("crm_seguros.db"); cursor = conexion.cursor()
+                    registros = 0
+                    for index, fila in df_import.iterrows():
+                        nombre = str(fila.get('Nombre_Completo', '')).strip()
+                        if nombre == 'nan' or not nombre: continue
+                        
+                        rfc = str(fila.get('RFC', 'No especificado')).strip()
+                        if rfc == 'nan' or not rfc: rfc = f"SIN_RFC_{index}"
+                        
+                        tel = str(fila.get('Telefono', 'No especificado'))
+                        correo = str(fila.get('Correo', 'No especificado'))
+                        direc = str(fila.get('Direccion', 'No especificada'))
+                        aseg = str(fila.get('Aseguradora', ''))
+                        pol = str(fila.get('Numero_Poliza', ''))
+                        ini = str(fila.get('Inicio_Vigencia_DD/MM/AAAA', 'No especificado'))
+                        fin = str(fila.get('Fin_Vigencia_DD/MM/AAAA', 'No especificado'))
+                        ejecutivo_excel = str(fila.get('Ejecutivo', 'Titular (Agencia)')).strip()
+                        if ejecutivo_excel == 'nan' or not ejecutivo_excel: ejecutivo_excel = 'Titular (Agencia)'
+                        
+                        cursor.execute("INSERT OR REPLACE INTO Clientes (rfc, nombre, telefono, correo, fecha_nacimiento, direccion) VALUES (?, ?, ?, ?, 'No calculado', ?)", (rfc, nombre, tel, correo, direc))
+                        if pol and pol != 'nan':
+                            cursor.execute("INSERT OR REPLACE INTO Polizas (numero_poliza, rfc_cliente, aseguradora, inicio_vigencia, fin_vigencia, ruta_archivo, ejecutivo) VALUES (?, ?, ?, ?, ?, '', ?)", (pol, rfc, aseg, ini, fin, ejecutivo_excel))
+                        registros += 1
+                    conexion.commit(); conexion.close()
+                    st.success(f"🎉 ¡Misión cumplida! Se migraron {registros} clientes a tu CRM."); st.balloons()
+                except Exception as e: st.error(f"Error técnico en el archivo: {e}")
+
+# ==========================================
+# PESTAÑA 7: RESPALDO A LA NUBE
+# ==========================================
+with pestana7:
+    st.markdown("### ☁️ Centro de Seguridad y Respaldo")
+    st.info("Esta herramienta empaquetará tu base de datos y todas las carpetas de pólizas en formato ZIP y las enviará directamente a tu cuenta de Google Drive.")
+    if st.button("🚀 Iniciar Respaldo Seguro", type="primary"):
+        with st.spinner("📦 Empaquetando y encriptando archivos locales..."):
+            nombre_zip = f"Respaldo_Agentia_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+            try:
+                with zipfile.ZipFile(nombre_zip, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                    if os.path.exists('crm_seguros.db'): zipf.write('crm_seguros.db')
+                    if os.path.exists('Polizas_Guardadas'):
+                        for raiz, dir, arch in os.walk('Polizas_Guardadas'):
+                            for a in arch: zipf.write(os.path.join(raiz, a))
+                with st.spinner("☁️ Estableciendo conexión segura con Google Drive..."):
+                    if os.path.exists('token.json'):
+                        from google.oauth2.credentials import Credentials
+                        from googleapiclient.discovery import build
+                        from googleapiclient.http import MediaFileUpload
+                        creds = Credentials.from_authorized_user_file('token.json', ['https://www.googleapis.com/auth/drive.file'])
+                        service = build('drive', 'v3', credentials=creds)
+                        media = MediaFileUpload(nombre_zip, mimetype='application/zip')
+                        service.files().create(body={'name': nombre_zip}, media_body=media, fields='id').execute()
+                        st.success("🎉 ¡El respaldo en la nube se completó exitosamente!")
+                        st.balloons(); del media; import gc; gc.collect() 
+                    else: st.error("No se encontró tu credencial de Drive (token.json).")
+                try: 
+                    if os.path.exists(nombre_zip): os.remove(nombre_zip)
+                except: pass
+            except Exception as e: st.error(f"Ocurrió un error inesperado: {e}")

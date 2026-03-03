@@ -16,7 +16,7 @@ import zipfile
 st.set_page_config(page_title="Agentia CRM", layout="wide", page_icon="icono_agentia.png")
 
 # 🚨 ¡PEGA TU LLAVE AQUÍ ADENTRO DE LAS COMILLAS! 🚨
-PI_KEY = st.secrets["GEMINI_API_KEY"]
+API_KEY = st.secrets["GEMINI_API_KEY"]
 client = genai.Client(api_key=API_KEY)
 
 # --- ✨ INYECCIÓN DE DISEÑO PREMIUM (UI/UX) ✨ ---
@@ -652,3 +652,4 @@ with col_centro:
         st.image("logo_creador.png", use_container_width=True)
     else:
         st.markdown("<h4 style='text-align: center; color: #555555;'>URCO Lab</h4>", unsafe_allow_html=True)
+

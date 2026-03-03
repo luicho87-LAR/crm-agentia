@@ -223,7 +223,7 @@ def generar_pdf_con_logos(df, titulo, fecha_inicio, fecha_fin):
 col_tit, col_vacia, col_der = st.columns([5, 1, 2])
 with col_tit:
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("<h1 style='color: #0b7af0; margin-bottom: 0px;'>Sistema de Gestión Integral</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='color: #000000; margin-bottom: 0px;'>Sistema de Gestión Integral</h1>", unsafe_allow_html=True)
     st.caption("Inteligencia para vender más")
 
 with col_der:
@@ -652,5 +652,3 @@ with col_centro:
         st.image("logo_creador.png", use_container_width=True)
     else:
         st.markdown("<h4 style='text-align: center; color: #555555;'>URCO Lab</h4>", unsafe_allow_html=True)
-
-

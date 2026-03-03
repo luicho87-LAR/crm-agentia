@@ -118,7 +118,14 @@ def extraer_texto_pdf(archivo_pdf):
 def limpiar_json(texto):
     try:
         if not texto: return None
-        texto_limpio = str(texto)
+        texto_limpio = str(texto).strip()
+        
+        # Limpieza agresiva de bloques markdown
+        if "```json" in texto_limpio:
+            texto_limpio = texto_limpio.split("```json")[1].split("```")[0]
+        elif "```" in texto_limpio:
+            texto_limpio = texto_limpio.split("```")[1].split("```")[0]
+            
         inicio_obj = texto_limpio.find('{')
         fin_obj = texto_limpio.rfind('}') + 1
         inicio_arr = texto_limpio.find('[')
@@ -133,14 +140,38 @@ def limpiar_json(texto):
     except:
         return None
 
+# Plantilla militar estricta para la Inteligencia Artificial
+PLANTILLA_IA = """
+{
+    "tipo_documento": "Poliza",
+    "aseguradora": "Ejemplo Aseguradora",
+    "numero_poliza": "123456",
+    "nombre_cliente": "Juan Perez",
+    "rfc_cliente": "XAXX010101000",
+    "telefono": "5551234567",
+    "correo": "correo@ejemplo.com",
+    "inicio_vigencia": "01/01/2024",
+    "fin_vigencia": "01/01/2025",
+    "direccion_completa": "Calle Falsa 123",
+    "tipo_producto": "Autos",
+    "vehiculo": "Nissan Versa 2023",
+    "fecha_limite_pago": "15/01/2024",
+    "monto_a_pagar": "1500.00",
+    "forma_pago": "Tarjeta de Credito",
+    "fecha_nacimiento": "01/01/1990"
+}
+"""
+
 def analizar_con_ia(texto_sucio):
-    instruccion = """Eres un experto en seguros. 1. Identifica "tipo_documento" ("Poliza" o "Recibo"). 2. Extrae: aseguradora, numero_poliza, nombre_cliente, rfc_cliente, telefono, correo, inicio_vigencia, fin_vigencia, direccion_completa. 3. Identifica "tipo_producto" (Autos, Gastos Médicos Mayores, Vida, Daños Empresariales, Hogar, u Otro). 4. Extrae en "vehiculo" (DEBE SER UN TEXTO PLANO con Marca, Modelo y Año si es auto, si no "N/A"). 5. Extrae cobranza: fecha_limite_pago, monto_a_pagar, y "forma_pago" (ej. Efectivo, Transferencia, Visa, Mastercard, Tarjeta de Credito, Amex). 6. Calcula "fecha_nacimiento" (DD/MM/AAAA) desde el RFC. Devuelve SOLO JSON válido sin markdown."""
+    instruccion = f"""Eres un robot experto en seguros. Tu ÚNICA tarea es extraer información y devolverla ESTRICTAMENTE en este formato JSON, sin saludos, sin explicaciones, sin texto extra:
+    {PLANTILLA_IA}
+    Si un campo no aparece, pon "No especificado". Las fechas deben ser DD/MM/AAAA. Calcula fecha_nacimiento con el RFC si es posible."""
     try:
         prompt_completo = f"{instruccion}\n\n--- DOCUMENTO ---\n{texto_sucio}"
         response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt_completo)
-        return limpiar_json(response.text)
+        return response.text
     except Exception as e: 
-        return None
+        return f"ERROR_API: {str(e)}"
 
 def guardar_poliza_bd(datos, pdf_bytes=None, ejecutivo="Titular (Agencia)"):
     if not isinstance(datos, dict):
@@ -150,10 +181,12 @@ def guardar_poliza_bd(datos, pdf_bytes=None, ejecutivo="Titular (Agencia)"):
         try:
             tipo_doc = str(datos.get('tipo_documento', 'Poliza'))
             
+            # Salvavidas para RFC
             rfc = str(datos.get('rfc_cliente', '')).strip()
             if not rfc or rfc.lower() in ['no especificado', 'none', 'null', 'na']: 
                 rfc = f"SIN_RFC_{datetime.now().strftime('%Y%m%d%H%M%S')}"
                 
+            # Salvavidas para Póliza
             num_pol = str(datos.get('numero_poliza', '')).strip()
             if not num_pol or num_pol.lower() in ['no especificado', 'none', 'null', '', 'na']:
                 num_pol = f"POR_ASIGNAR_{datetime.now().strftime('%H%M%S')}"
@@ -173,12 +206,9 @@ def guardar_poliza_bd(datos, pdf_bytes=None, ejecutivo="Titular (Agencia)"):
             
             prod = str(datos.get('tipo_producto', 'No especificado'))
             veh = datos.get('vehiculo', 'N/A')
-            if isinstance(veh, dict):
-                veh = " ".join([str(v) for v in veh.values()])
-            elif isinstance(veh, list):
-                veh = ", ".join([str(v) for v in veh])
-            else:
-                veh = str(veh)
+            if isinstance(veh, dict): veh = " ".join([str(v) for v in veh.values()])
+            elif isinstance(veh, list): veh = ", ".join([str(v) for v in veh])
+            else: veh = str(veh)
             
             aseg = str(datos.get('aseguradora', 'No especificado'))
             ini = str(datos.get('inicio_vigencia', 'No especificado'))
@@ -441,42 +471,51 @@ with pestana2:
                 pdf_bytes = archivo.getvalue()
                 error_api = ""
                 
+                # Intentamos procesarlo con la IA
                 if texto_crudo and len(texto_crudo.strip()) > 20: 
-                    datos_json = analizar_con_ia(texto_crudo)
+                    respuesta_texto = analizar_con_ia(texto_crudo)
                 else:
                     ruta_temp = f"temp_{i}.pdf"
                     with open(ruta_temp, "wb") as f: f.write(pdf_bytes)
                     try:
                         archivo_gemini = client.files.upload(file=ruta_temp)
-                        instruccion_vision = """Eres experto en seguros. 1. Identifica "tipo_documento" ("Poliza" o "Recibo"). 2. Extrae: aseguradora, numero_poliza, nombre_cliente, rfc_cliente, telefono, correo, inicio_vigencia, fin_vigencia, direccion_completa. 3. Identifica "tipo_producto" (Autos, Gastos Médicos, Vida, Daños, Hogar, Otro). 4. Extrae "vehiculo" (DEBE SER UN TEXTO PLANO con Marca, Modelo y Año). 5. Extrae cobranza: fecha_limite_pago, monto_a_pagar, y "forma_pago" (Visa, Mastercard, Credito, Debito, etc.). Calcula fecha_nacimiento (DD/MM/AAAA). Devuelve SOLO JSON válido."""
+                        instruccion_vision = f"""Eres experto en seguros. Extrae la información en formato ESTRICTAMENTE JSON. Sigue esta plantilla exacta, no agregues saludos:\n{PLANTILLA_IA}"""
                         response = client.models.generate_content(model='gemini-2.5-flash', contents=[archivo_gemini, instruccion_vision])
-                        datos_json = limpiar_json(response.text)
+                        respuesta_texto = response.text
                     except Exception as e:
-                        error_api = str(e)
-                        datos_json = None
+                        respuesta_texto = f"ERROR_API: {str(e)}"
                     finally:
                         if os.path.exists(ruta_temp): 
                             try: os.remove(ruta_temp)
                             except: pass
                 
+                # Validamos y limpiamos el resultado
+                if respuesta_texto and not respuesta_texto.startswith("ERROR"):
+                    datos_json = limpiar_json(respuesta_texto)
+                    if not datos_json:
+                        error_api = f"La IA no devolvió estructura JSON. Respondió: {respuesta_texto[:150]}..."
+                else:
+                    error_api = respuesta_texto
+                
+                # Guardamos en la base de datos
                 if datos_json:
                     resultado = guardar_poliza_bd(datos_json, pdf_bytes=pdf_bytes, ejecutivo=ejecutivo_seleccionado)
                     if isinstance(resultado, str) and not resultado.startswith("Error"): 
                         exitos += 1
                     else: 
                         errores += 1
-                        st.error(f"🛑 Error guardando {archivo.name} en BD: {resultado}")
+                        st.error(f"🛑 Error de base de datos con {archivo.name}: {resultado}")
                 else: 
                     errores += 1
-                    razon = f"Motivo: {error_api}" if error_api else "La IA no pudo estructurar la información."
-                    st.error(f"⚠️ {archivo.name} fue ilegible. {razon}")
+                    st.error(f"⚠️ {archivo.name} fue ilegible. Detalles técnicos: {error_api}")
+                    
             barra_progreso.progress((i + 1) / total_archivos)
             
         if errores == 0:
             st.success(f"✅ ¡Se procesaron y automatizaron {exitos} documentos con éxito!")
             st.balloons()
         else: 
-            st.warning(f"⚠️ {exitos} guardados exitosamente. Hubo {errores} archivos con error. (Revisa los mensajes rojos arriba para más detalles).")
+            st.warning(f"⚠️ {exitos} guardados exitosamente. Hubo {errores} archivos con error. (Revisa los mensajes rojos arriba para ver qué dijo la IA).")
 
 # ==========================================
 # PESTAÑA 3: PROSPECTOS MANUALES
@@ -603,13 +642,15 @@ with pestana5:
         
         with col_r1:
             st.info("📈 **Ventas (Nuevas Pólizas)**")
-            # Corrección blindada de columnas forzadas por Python
-            df_ventas = pd.read_sql_query('SELECT c.nombre, p.aseguradora, p.numero_poliza, p.inicio_vigencia, p.ejecutivo FROM Polizas p JOIN Clientes c ON p.rfc_cliente = c.rfc', engine)
+            # Candado Definitivo: Forzamos lectura en minúsculas independientemente de SQL
+            df_ventas = pd.read_sql_query('SELECT c.nombre AS cliente, p.aseguradora AS aseguradora, p.numero_poliza AS poliza, p.inicio_vigencia AS inicio, p.ejecutivo AS ejecutivo FROM Polizas p JOIN Clientes c ON p.rfc_cliente = c.rfc', engine)
             if not df_ventas.empty:
-                df_ventas.columns = ['Cliente', 'Aseguradora', 'Poliza', 'Inicio', 'Ejecutivo']
-                df_ventas['fecha_dt'] = pd.to_datetime(df_ventas['Inicio'], format='%d/%m/%Y', errors='coerce')
+                df_ventas.columns = [str(col).lower() for col in df_ventas.columns]
+                df_ventas['fecha_dt'] = pd.to_datetime(df_ventas['inicio'], format='%d/%m/%Y', errors='coerce')
                 df_ventas_filtrado = df_ventas.loc[(df_ventas['fecha_dt'].dt.date >= fecha_inicio) & (df_ventas['fecha_dt'].dt.date <= fecha_fin)].drop(columns=['fecha_dt'])
-                if filtro_ejecutivo != "Todos los Ejecutivos": df_ventas_filtrado = df_ventas_filtrado[df_ventas_filtrado['Ejecutivo'] == filtro_ejecutivo]
+                if filtro_ejecutivo != "Todos los Ejecutivos": df_ventas_filtrado = df_ventas_filtrado[df_ventas_filtrado['ejecutivo'] == filtro_ejecutivo]
+                df_ventas_filtrado.columns = ['Cliente', 'Aseguradora', 'Poliza', 'Inicio', 'Ejecutivo']
+                
                 if not df_ventas_filtrado.empty:
                     st.download_button("📥 Excel (.csv)", data=df_ventas_filtrado.to_csv(index=False).encode('utf-8-sig'), file_name=f"Ventas_{filtro_ejecutivo}.csv", mime='text/csv', key='v_csv', use_container_width=True)
                     st.download_button("📄 PDF Oficial", data=generar_pdf_con_logos(df_ventas_filtrado, f"Ventas Nuevas - {filtro_ejecutivo}", fecha_inicio, fecha_fin), file_name=f"Ventas_{filtro_ejecutivo}.pdf", mime='application/pdf', key='v_pdf', use_container_width=True)
@@ -618,14 +659,16 @@ with pestana5:
             
         with col_r2:
             st.info("💰 **Historial de Cobranza**")
-            # Corrección blindada de columnas forzadas por Python
-            df_cob = pd.read_sql_query('SELECT c.nombre, p.aseguradora, r.monto, r.fecha_limite, r.estado, p.ejecutivo FROM Recibos r JOIN Polizas p ON r.numero_poliza = p.numero_poliza JOIN Clientes c ON p.rfc_cliente = c.rfc', engine)
+            # Candado Definitivo para Reportes
+            df_cob = pd.read_sql_query('SELECT c.nombre AS cliente, p.aseguradora AS aseguradora, r.monto AS monto, r.fecha_limite AS limite, r.estado AS estatus, p.ejecutivo AS ejecutivo FROM Recibos r JOIN Polizas p ON r.numero_poliza = p.numero_poliza JOIN Clientes c ON p.rfc_cliente = c.rfc', engine)
             if not df_cob.empty:
-                df_cob.columns = ['Cliente', 'Aseguradora', 'Monto', 'Limite', 'Estatus', 'Ejecutivo']
-                df_cob['fecha_dt'] = pd.to_datetime(df_cob['Limite'], format='%d/%m/%Y', errors='coerce')
+                df_cob.columns = [str(col).lower() for col in df_cob.columns]
+                df_cob['fecha_dt'] = pd.to_datetime(df_cob['limite'], format='%d/%m/%Y', errors='coerce')
                 df_cob_filtrado = df_cob.loc[(df_cob['fecha_dt'].dt.date >= fecha_inicio) & (df_cob['fecha_dt'].dt.date <= fecha_fin)].drop(columns=['fecha_dt'])
-                if filtro_ejecutivo != "Todos los Ejecutivos": df_cob_filtrado = df_cob_filtrado[df_cob_filtrado['Ejecutivo'] == filtro_ejecutivo]
-                if 'Monto' in df_cob_filtrado.columns: df_cob_filtrado['Monto'] = df_cob_filtrado['Monto'].apply(formato_pesos)
+                if filtro_ejecutivo != "Todos los Ejecutivos": df_cob_filtrado = df_cob_filtrado[df_cob_filtrado['ejecutivo'] == filtro_ejecutivo]
+                df_cob_filtrado.columns = ['Cliente', 'Aseguradora', 'Monto', 'Limite', 'Estatus', 'Ejecutivo']
+                df_cob_filtrado['Monto'] = df_cob_filtrado['Monto'].apply(formato_pesos)
+                
                 if not df_cob_filtrado.empty:
                     st.download_button("📥 Excel (.csv)", data=df_cob_filtrado.to_csv(index=False).encode('utf-8-sig'), file_name=f"Cobranza_{filtro_ejecutivo}.csv", mime='text/csv', key='c_csv', use_container_width=True)
                     st.download_button("📄 PDF Oficial", data=generar_pdf_con_logos(df_cob_filtrado, f"Cobranza - {filtro_ejecutivo}", fecha_inicio, fecha_fin), file_name=f"Cobranza_{filtro_ejecutivo}.pdf", mime='application/pdf', key='c_pdf', use_container_width=True)
@@ -634,13 +677,15 @@ with pestana5:
             
         with col_r3:
             st.info("🎯 **Efectividad Prospectos**")
-            # Corrección blindada de columnas forzadas por Python
-            df_prosp = pd.read_sql_query('SELECT nombre, producto, fecha_cotizacion, ejecutivo FROM Prospectos', engine)
+            # Candado Definitivo para Reportes
+            df_prosp = pd.read_sql_query('SELECT nombre AS prospecto, producto AS producto, fecha_cotizacion AS fecha, ejecutivo AS ejecutivo FROM Prospectos', engine)
             if not df_prosp.empty:
-                df_prosp.columns = ['Prospecto', 'Producto', 'Fecha', 'Ejecutivo']
-                df_prosp['fecha_dt'] = pd.to_datetime(df_prosp['Fecha'], format='%Y-%m-%d', errors='coerce')
+                df_prosp.columns = [str(col).lower() for col in df_prosp.columns]
+                df_prosp['fecha_dt'] = pd.to_datetime(df_prosp['fecha'], format='%Y-%m-%d', errors='coerce')
                 df_prosp_filtrado = df_prosp.loc[(df_prosp['fecha_dt'].dt.date >= fecha_inicio) & (df_prosp['fecha_dt'].dt.date <= fecha_fin)].drop(columns=['fecha_dt'])
-                if filtro_ejecutivo != "Todos los Ejecutivos": df_prosp_filtrado = df_prosp_filtrado[df_prosp_filtrado['Ejecutivo'] == filtro_ejecutivo]
+                if filtro_ejecutivo != "Todos los Ejecutivos": df_prosp_filtrado = df_prosp_filtrado[df_prosp_filtrado['ejecutivo'] == filtro_ejecutivo]
+                df_prosp_filtrado.columns = ['Prospecto', 'Producto', 'Fecha', 'Ejecutivo']
+                
                 if not df_prosp_filtrado.empty:
                     st.download_button("📥 Excel (.csv)", data=df_prosp_filtrado.to_csv(index=False).encode('utf-8-sig'), file_name=f"Prospectos_{filtro_ejecutivo}.csv", mime='text/csv', key='p_csv', use_container_width=True)
                     st.download_button("📄 PDF Oficial", data=generar_pdf_con_logos(df_prosp_filtrado, f"Prospectos - {filtro_ejecutivo}", fecha_inicio, fecha_fin), file_name=f"Prospectos_{filtro_ejecutivo}.pdf", mime='application/pdf', key='p_pdf', use_container_width=True)
@@ -658,7 +703,6 @@ col_izq, col_centro, col_der = st.columns([4, 2, 4])
 with col_centro:
     st.markdown("<p style='text-align: center; color: #888888; font-size: 13px; margin-bottom: 5px;'>Powered by:</p>", unsafe_allow_html=True)
     
-    # Cambia "logo_creador.png" por el nombre real de tu logo en GitHub
     if os.path.exists("logo_creador.png"):
         st.image("logo_creador.png", use_container_width=True)
     else:

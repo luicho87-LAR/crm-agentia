@@ -11,6 +11,7 @@ import urllib.parse
 from sqlalchemy import create_engine, text
 import io
 import zipfile
+import time  # NUEVO: Necesario para que Google no nos bloquee por velocidad
 
 # --- 1. CONFIGURACIÓN DE INTELIGENCIA ARTIFICIAL Y PÁGINA ---
 st.set_page_config(page_title="Agentia CRM", layout="wide", page_icon="icono_agentia.png")
@@ -120,7 +121,6 @@ def limpiar_json(texto):
         if not texto: return None
         texto_limpio = str(texto).strip()
         
-        # Limpieza agresiva de bloques markdown
         if "```json" in texto_limpio:
             texto_limpio = texto_limpio.split("```json")[1].split("```")[0]
         elif "```" in texto_limpio:
@@ -140,7 +140,6 @@ def limpiar_json(texto):
     except:
         return None
 
-# Plantilla militar estricta para la Inteligencia Artificial
 PLANTILLA_IA = """
 {
     "tipo_documento": "Poliza",
@@ -163,33 +162,33 @@ PLANTILLA_IA = """
 """
 
 def analizar_con_ia(texto_sucio):
-    instruccion = f"""Eres un robot experto en seguros. Tu ÚNICA tarea es extraer información y devolverla ESTRICTAMENTE en este formato JSON, sin saludos, sin explicaciones, sin texto extra:
-    {PLANTILLA_IA}
-    Si un campo no aparece, pon "No especificado". Las fechas deben ser DD/MM/AAAA. Calcula fecha_nacimiento con el RFC si es posible."""
-    try:
-        prompt_completo = f"{instruccion}\n\n--- DOCUMENTO ---\n{texto_sucio}"
-        response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt_completo)
-        return response.text
-    except Exception as e: 
-        return f"ERROR_API: {str(e)}"
+    instruccion = f"""Eres un robot experto en seguros. Tu ÚNICA tarea es extraer información y devolverla ESTRICTAMENTE en este formato JSON, sin saludos, sin explicaciones, sin texto extra:\n{PLANTILLA_IA}\nSi un campo no aparece, pon "No especificado". Las fechas deben ser DD/MM/AAAA. Calcula fecha_nacimiento con el RFC si es posible."""
+    
+    # SISTEMA ANTI-BLOQUEO PARA LA API GRATUITA (3 Reintentos)
+    for intento in range(3):
+        try:
+            prompt_completo = f"{instruccion}\n\n--- DOCUMENTO ---\n{texto_sucio}"
+            response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt_completo)
+            return response.text
+        except Exception as e: 
+            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                if intento < 2:  # Si falla por cuota, espera 10 segundos y vuelve a intentar
+                    time.sleep(10)
+                    continue
+            return f"ERROR_API: {str(e)}"
+    return "ERROR_API: Demasiados reintentos, Google bloqueó por límite de velocidad temporal."
 
 def guardar_poliza_bd(datos, pdf_bytes=None, ejecutivo="Titular (Agencia)"):
     if not isinstance(datos, dict):
-        return f"Error de IA: El formato devuelto no es un diccionario válido. Se obtuvo: {type(datos)}"
+        return f"Error de formato JSON devuelto."
         
     with engine.begin() as conn:
         try:
             tipo_doc = str(datos.get('tipo_documento', 'Poliza'))
-            
-            # Salvavidas para RFC
             rfc = str(datos.get('rfc_cliente', '')).strip()
-            if not rfc or rfc.lower() in ['no especificado', 'none', 'null', 'na']: 
-                rfc = f"SIN_RFC_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-                
-            # Salvavidas para Póliza
+            if not rfc or rfc.lower() in ['no especificado', 'none', 'null', 'na']: rfc = f"SIN_RFC_{datetime.now().strftime('%Y%m%d%H%M%S')}"
             num_pol = str(datos.get('numero_poliza', '')).strip()
-            if not num_pol or num_pol.lower() in ['no especificado', 'none', 'null', '', 'na']:
-                num_pol = f"POR_ASIGNAR_{datetime.now().strftime('%H%M%S')}"
+            if not num_pol or num_pol.lower() in ['no especificado', 'none', 'null', '', 'na']: num_pol = f"POR_ASIGNAR_{datetime.now().strftime('%H%M%S')}"
             
             nom = str(datos.get('nombre_cliente', 'No especificado'))
             tel = str(datos.get('telefono', 'No especificado'))
@@ -284,7 +283,6 @@ with col_der:
     if os.path.exists("logo_crm.png"):
         st.image("logo_crm.png", use_container_width=True)
         
-    # EL NUEVO SÚPER MENÚ DE CONFIGURACIÓN Y RESPALDOS
     with st.popover("⚙️ Configuración y Respaldos", use_container_width=True):
         
         with st.expander("👤 Gestión de Ejecutivos", expanded=False):
@@ -335,7 +333,7 @@ with col_der:
                     except Exception as e: st.error(f"Error técnico: {e}")
 
         with st.expander("☁️ Respaldo de Base de Datos", expanded=False):
-            st.info("Descarga un archivo ZIP con todos tus registros actuales para respaldarlo en tu Google Drive.")
+            st.info("Descarga un archivo ZIP con todos tus registros actuales para respaldarlo en Google Drive.")
             if st.button("📦 Generar ZIP de Respaldo", type="primary", use_container_width=True):
                 with st.spinner("Empaquetando..."):
                     try:
@@ -365,7 +363,6 @@ with col_der:
 st.markdown("---")
 lista_dinamica_ejecutivos = obtener_lista_ejecutivos()
 
-# Pestañas simplificadas y enfocadas en la operación
 pestana1, pestana2, pestana3, pestana4, pestana5 = st.tabs([
     "🔍 Buscador Inteligente", "📄 Lector IA Masivo", "🚦 Seguimiento Prospectos", 
     "🔔 Alertas y Cobranza", "📊 Reportes VIP"
@@ -456,6 +453,7 @@ with pestana2:
     st.write("1️⃣ **Selecciona a quién le pertenecen las pólizas que vas a subir:**")
     ejecutivo_seleccionado = st.selectbox("Asignar producción a:", lista_dinamica_ejecutivos)
     st.write("2️⃣ **Arrastra los PDFs (Pólizas y Recibos):**")
+    st.caption("Nota: Si subes muchos archivos, el sistema pausará unos segundos entre cada uno para no saturar a Google.")
     archivos_subidos = st.file_uploader("Arrastra tus archivos aquí...", type=["pdf"], accept_multiple_files=True)
     
     if archivos_subidos and st.button("🚀 Iniciar Procesamiento Automático", type="primary"):
@@ -478,10 +476,19 @@ with pestana2:
                     ruta_temp = f"temp_{i}.pdf"
                     with open(ruta_temp, "wb") as f: f.write(pdf_bytes)
                     try:
-                        archivo_gemini = client.files.upload(file=ruta_temp)
-                        instruccion_vision = f"""Eres experto en seguros. Extrae la información en formato ESTRICTAMENTE JSON. Sigue esta plantilla exacta, no agregues saludos:\n{PLANTILLA_IA}"""
-                        response = client.models.generate_content(model='gemini-2.5-flash', contents=[archivo_gemini, instruccion_vision])
-                        respuesta_texto = response.text
+                        # Intento con imagen si no hay texto extraible (con anti-bloqueo)
+                        for intento_vision in range(3):
+                            try:
+                                archivo_gemini = client.files.upload(file=ruta_temp)
+                                instruccion_vision = f"Extrae informacion SOLO en JSON:\n{PLANTILLA_IA}"
+                                response = client.models.generate_content(model='gemini-2.5-flash', contents=[archivo_gemini, instruccion_vision])
+                                respuesta_texto = response.text
+                                break
+                            except Exception as ev:
+                                if "429" in str(ev) and intento_vision < 2:
+                                    time.sleep(10)
+                                    continue
+                                respuesta_texto = f"ERROR_API: {str(ev)}"
                     except Exception as e:
                         respuesta_texto = f"ERROR_API: {str(e)}"
                     finally:
@@ -489,15 +496,14 @@ with pestana2:
                             try: os.remove(ruta_temp)
                             except: pass
                 
-                # Validamos y limpiamos el resultado
+                # Validamos el resultado
                 if respuesta_texto and not respuesta_texto.startswith("ERROR"):
                     datos_json = limpiar_json(respuesta_texto)
-                    if not datos_json:
-                        error_api = f"La IA no devolvió estructura JSON. Respondió: {respuesta_texto[:150]}..."
+                    if not datos_json: error_api = f"La IA no devolvió JSON válido."
                 else:
                     error_api = respuesta_texto
                 
-                # Guardamos en la base de datos
+                # Guardamos
                 if datos_json:
                     resultado = guardar_poliza_bd(datos_json, pdf_bytes=pdf_bytes, ejecutivo=ejecutivo_seleccionado)
                     if isinstance(resultado, str) and not resultado.startswith("Error"): 
@@ -507,15 +513,18 @@ with pestana2:
                         st.error(f"🛑 Error de base de datos con {archivo.name}: {resultado}")
                 else: 
                     errores += 1
-                    st.error(f"⚠️ {archivo.name} fue ilegible. Detalles técnicos: {error_api}")
-                    
-            barra_progreso.progress((i + 1) / total_archivos)
+                    st.error(f"⚠️ {archivo.name} no se pudo leer. Detalles: {error_api}")
             
+            barra_progreso.progress((i + 1) / total_archivos)
+            # PAUSA ANTI-BLOQUEO DE GOOGLE
+            if i < total_archivos - 1:
+                time.sleep(4)
+                
         if errores == 0:
-            st.success(f"✅ ¡Se procesaron y automatizaron {exitos} documentos con éxito!")
+            st.success(f"✅ ¡Se procesaron {exitos} documentos con éxito!")
             st.balloons()
         else: 
-            st.warning(f"⚠️ {exitos} guardados exitosamente. Hubo {errores} archivos con error. (Revisa los mensajes rojos arriba para ver qué dijo la IA).")
+            st.warning(f"⚠️ {exitos} guardados exitosamente. Hubo {errores} errores.")
 
 # ==========================================
 # PESTAÑA 3: PROSPECTOS MANUALES
@@ -642,10 +651,10 @@ with pestana5:
         
         with col_r1:
             st.info("📈 **Ventas (Nuevas Pólizas)**")
-            # Candado Definitivo: Forzamos lectura en minúsculas independientemente de SQL
+            # CANDADO ABSOLUTO (Evita el KeyError: 'Inicio')
             df_ventas = pd.read_sql_query('SELECT c.nombre AS cliente, p.aseguradora AS aseguradora, p.numero_poliza AS poliza, p.inicio_vigencia AS inicio, p.ejecutivo AS ejecutivo FROM Polizas p JOIN Clientes c ON p.rfc_cliente = c.rfc', engine)
             if not df_ventas.empty:
-                df_ventas.columns = [str(col).lower() for col in df_ventas.columns]
+                df_ventas.columns = ['cliente', 'aseguradora', 'poliza', 'inicio', 'ejecutivo']
                 df_ventas['fecha_dt'] = pd.to_datetime(df_ventas['inicio'], format='%d/%m/%Y', errors='coerce')
                 df_ventas_filtrado = df_ventas.loc[(df_ventas['fecha_dt'].dt.date >= fecha_inicio) & (df_ventas['fecha_dt'].dt.date <= fecha_fin)].drop(columns=['fecha_dt'])
                 if filtro_ejecutivo != "Todos los Ejecutivos": df_ventas_filtrado = df_ventas_filtrado[df_ventas_filtrado['ejecutivo'] == filtro_ejecutivo]
@@ -659,10 +668,9 @@ with pestana5:
             
         with col_r2:
             st.info("💰 **Historial de Cobranza**")
-            # Candado Definitivo para Reportes
             df_cob = pd.read_sql_query('SELECT c.nombre AS cliente, p.aseguradora AS aseguradora, r.monto AS monto, r.fecha_limite AS limite, r.estado AS estatus, p.ejecutivo AS ejecutivo FROM Recibos r JOIN Polizas p ON r.numero_poliza = p.numero_poliza JOIN Clientes c ON p.rfc_cliente = c.rfc', engine)
             if not df_cob.empty:
-                df_cob.columns = [str(col).lower() for col in df_cob.columns]
+                df_cob.columns = ['cliente', 'aseguradora', 'monto', 'limite', 'estatus', 'ejecutivo']
                 df_cob['fecha_dt'] = pd.to_datetime(df_cob['limite'], format='%d/%m/%Y', errors='coerce')
                 df_cob_filtrado = df_cob.loc[(df_cob['fecha_dt'].dt.date >= fecha_inicio) & (df_cob['fecha_dt'].dt.date <= fecha_fin)].drop(columns=['fecha_dt'])
                 if filtro_ejecutivo != "Todos los Ejecutivos": df_cob_filtrado = df_cob_filtrado[df_cob_filtrado['ejecutivo'] == filtro_ejecutivo]
@@ -677,10 +685,9 @@ with pestana5:
             
         with col_r3:
             st.info("🎯 **Efectividad Prospectos**")
-            # Candado Definitivo para Reportes
             df_prosp = pd.read_sql_query('SELECT nombre AS prospecto, producto AS producto, fecha_cotizacion AS fecha, ejecutivo AS ejecutivo FROM Prospectos', engine)
             if not df_prosp.empty:
-                df_prosp.columns = [str(col).lower() for col in df_prosp.columns]
+                df_prosp.columns = ['prospecto', 'producto', 'fecha', 'ejecutivo']
                 df_prosp['fecha_dt'] = pd.to_datetime(df_prosp['fecha'], format='%Y-%m-%d', errors='coerce')
                 df_prosp_filtrado = df_prosp.loc[(df_prosp['fecha_dt'].dt.date >= fecha_inicio) & (df_prosp['fecha_dt'].dt.date <= fecha_fin)].drop(columns=['fecha_dt'])
                 if filtro_ejecutivo != "Todos los Ejecutivos": df_prosp_filtrado = df_prosp_filtrado[df_prosp_filtrado['ejecutivo'] == filtro_ejecutivo]
@@ -702,7 +709,6 @@ col_izq, col_centro, col_der = st.columns([4, 2, 4])
 
 with col_centro:
     st.markdown("<p style='text-align: center; color: #888888; font-size: 13px; margin-bottom: 5px;'>Powered by:</p>", unsafe_allow_html=True)
-    
     if os.path.exists("logo_creador.png"):
         st.image("logo_creador.png", use_container_width=True)
     else:

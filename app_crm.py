@@ -462,7 +462,7 @@ with pestana5:
         
         with col_r1:
             st.info("📈 **Ventas (Nuevas Pólizas)**")
-            df_ventas = pd.read_sql_query("SELECT c.nombre as Cliente, p.aseguradora as Aseguradora, p.numero_poliza as Poliza, p.inicio_vigencia as Inicio, p.ejecutivo as Ejecutivo FROM Polizas p JOIN Clientes c ON p.rfc_cliente = c.rfc", engine)
+            df_ventas = pd.read_sql_query('SELECT c.nombre as "Cliente", p.aseguradora as "Aseguradora", p.numero_poliza as "Poliza", p.inicio_vigencia as "Inicio", p.ejecutivo as "Ejecutivo" FROM Polizas p JOIN Clientes c ON p.rfc_cliente = c.rfc', engine)
             if not df_ventas.empty:
                 df_ventas['fecha_dt'] = pd.to_datetime(df_ventas['Inicio'], format='%d/%m/%Y', errors='coerce')
                 df_ventas_filtrado = df_ventas.loc[(df_ventas['fecha_dt'].dt.date >= fecha_inicio) & (df_ventas['fecha_dt'].dt.date <= fecha_fin)].drop(columns=['fecha_dt'])
@@ -475,7 +475,7 @@ with pestana5:
             
         with col_r2:
             st.info("💰 **Historial de Cobranza**")
-            df_cob = pd.read_sql_query("SELECT c.nombre as Cliente, p.aseguradora as Aseguradora, r.monto as Monto, r.fecha_limite as Limite, r.estado as Estatus, p.ejecutivo as Ejecutivo FROM Recibos r JOIN Polizas p ON r.numero_poliza = p.numero_poliza JOIN Clientes c ON p.rfc_cliente = c.rfc", engine)
+            df_cob = pd.read_sql_query('SELECT c.nombre as "Cliente", p.aseguradora as "Aseguradora", r.monto as "Monto", r.fecha_limite as "Limite", r.estado as "Estatus", p.ejecutivo as "Ejecutivo" FROM Recibos r JOIN Polizas p ON r.numero_poliza = p.numero_poliza JOIN Clientes c ON p.rfc_cliente = c.rfc', engine)
             if not df_cob.empty:
                 df_cob['fecha_dt'] = pd.to_datetime(df_cob['Limite'], format='%d/%m/%Y', errors='coerce')
                 df_cob_filtrado = df_cob.loc[(df_cob['fecha_dt'].dt.date >= fecha_inicio) & (df_cob['fecha_dt'].dt.date <= fecha_fin)].drop(columns=['fecha_dt'])
@@ -489,7 +489,7 @@ with pestana5:
             
         with col_r3:
             st.info("🎯 **Efectividad Prospectos**")
-            df_prosp = pd.read_sql_query("SELECT nombre as Prospecto, producto as Producto, fecha_cotizacion as Fecha, ejecutivo as Ejecutivo FROM Prospectos", engine)
+            df_prosp = pd.read_sql_query('SELECT nombre as "Prospecto", producto as "Producto", fecha_cotizacion as "Fecha", ejecutivo as "Ejecutivo" FROM Prospectos', engine)
             if not df_prosp.empty:
                 df_prosp['fecha_dt'] = pd.to_datetime(df_prosp['Fecha'], format='%Y-%m-%d', errors='coerce')
                 df_prosp_filtrado = df_prosp.loc[(df_prosp['fecha_dt'].dt.date >= fecha_inicio) & (df_prosp['fecha_dt'].dt.date <= fecha_fin)].drop(columns=['fecha_dt'])
@@ -589,3 +589,4 @@ with pestana7:
             except Exception as e:
 
                 st.error(f"Error al generar el respaldo: {e}")
+

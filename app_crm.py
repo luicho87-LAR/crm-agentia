@@ -16,7 +16,7 @@ import zipfile
 st.set_page_config(page_title="Agentia CRM", layout="wide", page_icon="icono_agentia.png")
 
 # 🚨 ¡PEGA TU LLAVE AQUÍ ADENTRO DE LAS COMILLAS! 🚨
-API_KEY = st.secrets["GEMINI_API_KEY"] 
+API_KEY = st.secrets["GEMINI_API_KEY"]  
 client = genai.Client(api_key=API_KEY)
 
 # --- ✨ INYECCIÓN DE DISEÑO PREMIUM (UI/UX) ✨ ---
@@ -217,7 +217,7 @@ def generar_pdf_con_logos(df, titulo, fecha_inicio, fecha_fin):
     except Exception: pass 
     return pdf_bytes
 
-# --- 4. DISEÑO DE LA PANTALLA WEB ---
+# --- 4. DISEÑO DE LA PANTALLA WEB E INTEGRACIÓN DE CONFIGURACIÓN ---
 col_tit, col_vacia, col_der = st.columns([5, 1, 2])
 with col_tit:
     st.markdown("<br>", unsafe_allow_html=True)
@@ -227,28 +227,92 @@ with col_tit:
 with col_der:
     if os.path.exists("logo_crm.png"):
         st.image("logo_crm.png", use_container_width=True)
-    with st.popover("⚙️ Configuración del Equipo", use_container_width=True):
-        st.markdown("#### 👤 Dar de alta a un nuevo Ejecutivo")
-        with st.form("form_nuevo_ejecutivo", clear_on_submit=True):
-            nuevo_nombre = st.text_input("Nombre completo:")
-            if st.form_submit_button("➕ Agregar al Equipo", type="primary"):
-                if nuevo_nombre:
+        
+    # EL NUEVO SÚPER MENÚ DE CONFIGURACIÓN Y RESPALDOS
+    with st.popover("⚙️ Configuración y Respaldos", use_container_width=True):
+        
+        with st.expander("👤 Gestión de Ejecutivos", expanded=False):
+            with st.form("form_nuevo_ejecutivo", clear_on_submit=True):
+                nuevo_nombre = st.text_input("Nombre completo:")
+                if st.form_submit_button("➕ Agregar al Equipo", type="primary"):
+                    if nuevo_nombre:
+                        try:
+                            with engine.begin() as conn:
+                                conn.execute(text("INSERT INTO Ejecutivos (nombre) VALUES (:nom)"), {"nom": nuevo_nombre.strip()})
+                            st.success(f"¡{nuevo_nombre} agregado!"); st.rerun() 
+                        except Exception: st.error("Este nombre ya está registrado.")
+                    else: st.warning("El campo no puede estar vacío.")
+            df_equipo = pd.read_sql_query("SELECT id as ID, nombre as Nombre FROM Ejecutivos ORDER BY id", engine)
+            st.dataframe(df_equipo, hide_index=True, use_container_width=True)
+            
+        with st.expander("📥 Importar Cartera Masiva (Excel/CSV)", expanded=False):
+            df_plantilla = pd.DataFrame(columns=['Nombre_Completo', 'RFC', 'Telefono', 'Correo', 'Direccion', 'Aseguradora', 'Numero_Poliza', 'Inicio_Vigencia_DD/MM/AAAA', 'Fin_Vigencia_DD/MM/AAAA', 'Ejecutivo'])
+            st.download_button(label="📥 Bajar Formato .CSV", data=df_plantilla.to_csv(index=False).encode('utf-8-sig'), file_name="Plantilla_Agentia.csv", mime='text/csv')
+            
+            archivo_importar = st.file_uploader("Sube tu archivo lleno (.csv o .xlsx)", type=["csv", "xlsx"])
+            if archivo_importar and st.button("🚀 Iniciar Carga", type="primary"):
+                with st.spinner("Sincronizando registros en la nube..."):
                     try:
+                        df_import = pd.read_csv(archivo_importar) if archivo_importar.name.endswith('.csv') else pd.read_excel(archivo_importar)
+                        registros = 0
                         with engine.begin() as conn:
-                            conn.execute(text("INSERT INTO Ejecutivos (nombre) VALUES (:nom)"), {"nom": nuevo_nombre.strip()})
-                        st.success(f"¡{nuevo_nombre} agregado!"); st.rerun() 
-                    except Exception: st.error("Este nombre ya está registrado.")
-                else: st.warning("El campo no puede estar vacío.")
-        st.markdown("---")
-        st.markdown("#### 📋 Directorio Actual")
-        df_equipo = pd.read_sql_query("SELECT id as ID, nombre as Nombre FROM Ejecutivos ORDER BY id", engine)
-        st.dataframe(df_equipo, hide_index=True, use_container_width=True)
+                            for index, fila in df_import.iterrows():
+                                nombre = str(fila.get('Nombre_Completo', '')).strip()
+                                if nombre == 'nan' or not nombre: continue
+                                rfc = str(fila.get('RFC', 'No especificado')).strip()
+                                if rfc == 'nan' or not rfc: rfc = f"SIN_RFC_{index}"
+                                tel = str(fila.get('Telefono', 'No especificado'))
+                                correo = str(fila.get('Correo', 'No especificado'))
+                                direc = str(fila.get('Direccion', 'No especificada'))
+                                aseg = str(fila.get('Aseguradora', ''))
+                                pol = str(fila.get('Numero_Poliza', ''))
+                                ini = str(fila.get('Inicio_Vigencia_DD/MM/AAAA', 'No especificado'))
+                                fin = str(fila.get('Fin_Vigencia_DD/MM/AAAA', 'No especificado'))
+                                ejecutivo_excel = str(fila.get('Ejecutivo', 'Titular (Agencia)')).strip()
+                                if ejecutivo_excel == 'nan' or not ejecutivo_excel: ejecutivo_excel = 'Titular (Agencia)'
+                                
+                                conn.execute(text("INSERT INTO Clientes (rfc, nombre, telefono, correo, fecha_nacimiento, direccion) VALUES (:rfc, :nom, :tel, :cor, 'No calculado', :dir) ON CONFLICT (rfc) DO UPDATE SET nombre=EXCLUDED.nombre, telefono=EXCLUDED.telefono, correo=EXCLUDED.correo, direccion=EXCLUDED.direccion"), {"rfc": rfc, "nom": nombre, "tel": tel, "cor": correo, "dir": direc})
+                                if pol and pol != 'nan':
+                                    conn.execute(text("INSERT INTO Polizas (numero_poliza, rfc_cliente, aseguradora, inicio_vigencia, fin_vigencia, ejecutivo, tipo_producto, vehiculo) VALUES (:pol, :rfc, :aseg, :ini, :fin, :ejec, 'No especificado', 'N/A') ON CONFLICT (numero_poliza) DO UPDATE SET inicio_vigencia=EXCLUDED.inicio_vigencia, fin_vigencia=EXCLUDED.fin_vigencia, ejecutivo=EXCLUDED.ejecutivo"), {"pol": pol, "rfc": rfc, "aseg": aseg, "ini": ini, "fin": fin, "ejec": ejecutivo_excel})
+                                registros += 1
+                        st.success(f"🎉 ¡Misión cumplida! Se migraron {registros} clientes."); st.balloons()
+                    except Exception as e: st.error(f"Error técnico: {e}")
+
+        with st.expander("☁️ Respaldo de Base de Datos", expanded=False):
+            st.info("Descarga un archivo ZIP con todos tus registros actuales para respaldarlo en tu Google Drive.")
+            if st.button("📦 Generar ZIP de Respaldo", type="primary", use_container_width=True):
+                with st.spinner("Empaquetando..."):
+                    try:
+                        df_c = pd.read_sql_query("SELECT * FROM Clientes", engine)
+                        df_p = pd.read_sql_query("SELECT numero_poliza, rfc_cliente, aseguradora, tipo_producto, vehiculo, inicio_vigencia, fin_vigencia, ejecutivo FROM Polizas", engine)
+                        df_r = pd.read_sql_query("SELECT * FROM Recibos", engine)
+                        df_pr = pd.read_sql_query("SELECT * FROM Prospectos", engine)
+                        
+                        zip_buffer = io.BytesIO()
+                        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+                            zip_file.writestr("1_Clientes.csv", df_c.to_csv(index=False).encode('utf-8-sig'))
+                            zip_file.writestr("2_Polizas.csv", df_p.to_csv(index=False).encode('utf-8-sig'))
+                            zip_file.writestr("3_Recibos.csv", df_r.to_csv(index=False).encode('utf-8-sig'))
+                            zip_file.writestr("4_Prospectos.csv", df_pr.to_csv(index=False).encode('utf-8-sig'))
+                        
+                        st.success("¡Listo!")
+                        st.download_button(
+                            label="📥 Guardar Archivo ZIP",
+                            data=zip_buffer.getvalue(),
+                            file_name=f"Respaldo_Agentia_{datetime.now().strftime('%Y%m%d')}.zip",
+                            mime="application/zip",
+                            type="secondary",
+                            use_container_width=True
+                        )
+                    except Exception as e: st.error(f"Error: {e}")
 
 st.markdown("---")
 lista_dinamica_ejecutivos = obtener_lista_ejecutivos()
-pestana1, pestana2, pestana3, pestana4, pestana5, pestana6, pestana7 = st.tabs([
+
+# Pestañas simplificadas y enfocadas en la operación
+pestana1, pestana2, pestana3, pestana4, pestana5 = st.tabs([
     "🔍 Buscador Inteligente", "📄 Lector IA Masivo", "🚦 Seguimiento Prospectos", 
-    "🔔 Alertas y Cobranza", "📊 Reportes", "📥 Importador", "☁️ Respaldo a Drive"
+    "🔔 Alertas y Cobranza", "📊 Reportes VIP"
 ])
 
 # ==========================================
@@ -289,7 +353,6 @@ with pestana1:
                                 st.success("¡Actualizado!"); st.rerun()
 
                     st.markdown("#### 📑 Pólizas Activas")
-                    # Corrección robusta de mayúsculas para las columnas de la tabla
                     df_polizas = pd.read_sql_query(f"SELECT aseguradora, numero_poliza, tipo_producto, vehiculo, inicio_vigencia, fin_vigencia, ejecutivo FROM Polizas WHERE rfc_cliente = '{cliente['rfc']}'", engine)
                     if not df_polizas.empty:
                         df_polizas.columns = ['Aseguradora', 'Poliza', 'Ramo', 'Vehículo', 'Inicio', 'Fin', 'Ejecutivo']
@@ -362,7 +425,6 @@ with pestana2:
                         response = client.models.generate_content(model='gemini-2.5-flash', contents=[archivo_gemini, instruccion_vision])
                         
                         texto_limpio = response.text
-                        # Escáner limpiador para evitar errores si la IA agrega texto basura
                         inicio = texto_limpio.find('{')
                         fin = texto_limpio.rfind('}') + 1
                         if inicio != -1 and fin > 0:
@@ -512,9 +574,10 @@ with pestana5:
         
         with col_r1:
             st.info("📈 **Ventas (Nuevas Pólizas)**")
-            # Corrección definitiva: Forzamos los nombres de columnas desde SQL
-            df_ventas = pd.read_sql_query('SELECT c.nombre AS "Cliente", p.aseguradora AS "Aseguradora", p.numero_poliza AS "Poliza", p.inicio_vigencia AS "Inicio", p.ejecutivo AS "Ejecutivo" FROM Polizas p JOIN Clientes c ON p.rfc_cliente = c.rfc', engine)
+            # Corrección blindada de columnas forzadas por Python
+            df_ventas = pd.read_sql_query('SELECT c.nombre, p.aseguradora, p.numero_poliza, p.inicio_vigencia, p.ejecutivo FROM Polizas p JOIN Clientes c ON p.rfc_cliente = c.rfc', engine)
             if not df_ventas.empty:
+                df_ventas.columns = ['Cliente', 'Aseguradora', 'Poliza', 'Inicio', 'Ejecutivo']
                 df_ventas['fecha_dt'] = pd.to_datetime(df_ventas['Inicio'], format='%d/%m/%Y', errors='coerce')
                 df_ventas_filtrado = df_ventas.loc[(df_ventas['fecha_dt'].dt.date >= fecha_inicio) & (df_ventas['fecha_dt'].dt.date <= fecha_fin)].drop(columns=['fecha_dt'])
                 if filtro_ejecutivo != "Todos los Ejecutivos": df_ventas_filtrado = df_ventas_filtrado[df_ventas_filtrado['Ejecutivo'] == filtro_ejecutivo]
@@ -526,9 +589,10 @@ with pestana5:
             
         with col_r2:
             st.info("💰 **Historial de Cobranza**")
-            # Corrección definitiva: Forzamos los nombres de columnas desde SQL
-            df_cob = pd.read_sql_query('SELECT c.nombre AS "Cliente", p.aseguradora AS "Aseguradora", r.monto AS "Monto", r.fecha_limite AS "Limite", r.estado AS "Estatus", p.ejecutivo AS "Ejecutivo" FROM Recibos r JOIN Polizas p ON r.numero_poliza = p.numero_poliza JOIN Clientes c ON p.rfc_cliente = c.rfc', engine)
+            # Corrección blindada de columnas forzadas por Python
+            df_cob = pd.read_sql_query('SELECT c.nombre, p.aseguradora, r.monto, r.fecha_limite, r.estado, p.ejecutivo FROM Recibos r JOIN Polizas p ON r.numero_poliza = p.numero_poliza JOIN Clientes c ON p.rfc_cliente = c.rfc', engine)
             if not df_cob.empty:
+                df_cob.columns = ['Cliente', 'Aseguradora', 'Monto', 'Limite', 'Estatus', 'Ejecutivo']
                 df_cob['fecha_dt'] = pd.to_datetime(df_cob['Limite'], format='%d/%m/%Y', errors='coerce')
                 df_cob_filtrado = df_cob.loc[(df_cob['fecha_dt'].dt.date >= fecha_inicio) & (df_cob['fecha_dt'].dt.date <= fecha_fin)].drop(columns=['fecha_dt'])
                 if filtro_ejecutivo != "Todos los Ejecutivos": df_cob_filtrado = df_cob_filtrado[df_cob_filtrado['Ejecutivo'] == filtro_ejecutivo]
@@ -541,9 +605,10 @@ with pestana5:
             
         with col_r3:
             st.info("🎯 **Efectividad Prospectos**")
-            # Corrección definitiva: Forzamos los nombres de columnas desde SQL
-            df_prosp = pd.read_sql_query('SELECT nombre AS "Prospecto", producto AS "Producto", fecha_cotizacion AS "Fecha", ejecutivo AS "Ejecutivo" FROM Prospectos', engine)
+            # Corrección blindada de columnas forzadas por Python
+            df_prosp = pd.read_sql_query('SELECT nombre, producto, fecha_cotizacion, ejecutivo FROM Prospectos', engine)
             if not df_prosp.empty:
+                df_prosp.columns = ['Prospecto', 'Producto', 'Fecha', 'Ejecutivo']
                 df_prosp['fecha_dt'] = pd.to_datetime(df_prosp['Fecha'], format='%Y-%m-%d', errors='coerce')
                 df_prosp_filtrado = df_prosp.loc[(df_prosp['fecha_dt'].dt.date >= fecha_inicio) & (df_prosp['fecha_dt'].dt.date <= fecha_fin)].drop(columns=['fecha_dt'])
                 if filtro_ejecutivo != "Todos los Ejecutivos": df_prosp_filtrado = df_prosp_filtrado[df_prosp_filtrado['Ejecutivo'] == filtro_ejecutivo]
@@ -553,92 +618,6 @@ with pestana5:
                 else: st.warning("Sin datos para este filtro.")
             else: st.warning("Sin prospectos.")
     else: st.info("Selecciona fechas en el calendario.")
-
-# ==========================================
-# PESTAÑA 6: IMPORTADOR MASIVO
-# ==========================================
-with pestana6:
-    st.markdown("### 📥 Migración de Cartera (Excel/CSV)")
-    col_a, col_b = st.columns(2)
-    with col_a:
-        st.markdown("##### 1. Descarga el formato base")
-        df_plantilla = pd.DataFrame(columns=['Nombre_Completo', 'RFC', 'Telefono', 'Correo', 'Direccion', 'Aseguradora', 'Numero_Poliza', 'Inicio_Vigencia_DD/MM/AAAA', 'Fin_Vigencia_DD/MM/AAAA', 'Ejecutivo'])
-        st.download_button(label="📥 Descargar Plantilla.csv", data=df_plantilla.to_csv(index=False).encode('utf-8-sig'), file_name="Plantilla_Agentia.csv", mime='text/csv', type="primary")
-        
-    with col_b:
-        st.markdown("##### 2. Sube tus datos")
-        archivo_importar = st.file_uploader("Sube tu archivo lleno (.csv o .xlsx)", type=["csv", "xlsx"])
-        if archivo_importar and st.button("🚀 Iniciar Carga a la Base de Datos", type="primary"):
-            with st.spinner("Sincronizando registros en la nube..."):
-                try:
-                    df_import = pd.read_csv(archivo_importar) if archivo_importar.name.endswith('.csv') else pd.read_excel(archivo_importar)
-                    registros = 0
-                    with engine.begin() as conn:
-                        for index, fila in df_import.iterrows():
-                            nombre = str(fila.get('Nombre_Completo', '')).strip()
-                            if nombre == 'nan' or not nombre: continue
-                            
-                            rfc = str(fila.get('RFC', 'No especificado')).strip()
-                            if rfc == 'nan' or not rfc: rfc = f"SIN_RFC_{index}"
-                            
-                            tel = str(fila.get('Telefono', 'No especificado'))
-                            correo = str(fila.get('Correo', 'No especificado'))
-                            direc = str(fila.get('Direccion', 'No especificada'))
-                            aseg = str(fila.get('Aseguradora', ''))
-                            pol = str(fila.get('Numero_Poliza', ''))
-                            ini = str(fila.get('Inicio_Vigencia_DD/MM/AAAA', 'No especificado'))
-                            fin = str(fila.get('Fin_Vigencia_DD/MM/AAAA', 'No especificado'))
-                            ejecutivo_excel = str(fila.get('Ejecutivo', 'Titular (Agencia)')).strip()
-                            if ejecutivo_excel == 'nan' or not ejecutivo_excel: ejecutivo_excel = 'Titular (Agencia)'
-                            
-                            conn.execute(text("""
-                                INSERT INTO Clientes (rfc, nombre, telefono, correo, fecha_nacimiento, direccion) 
-                                VALUES (:rfc, :nom, :tel, :cor, 'No calculado', :dir)
-                                ON CONFLICT (rfc) DO UPDATE SET nombre=EXCLUDED.nombre, telefono=EXCLUDED.telefono, correo=EXCLUDED.correo, direccion=EXCLUDED.direccion
-                            """), {"rfc": rfc, "nom": nombre, "tel": tel, "cor": correo, "dir": direc})
-                            
-                            if pol and pol != 'nan':
-                                conn.execute(text("""
-                                    INSERT INTO Polizas (numero_poliza, rfc_cliente, aseguradora, inicio_vigencia, fin_vigencia, ejecutivo, tipo_producto, vehiculo) 
-                                    VALUES (:pol, :rfc, :aseg, :ini, :fin, :ejec, 'No especificado', 'N/A')
-                                    ON CONFLICT (numero_poliza) DO UPDATE SET inicio_vigencia=EXCLUDED.inicio_vigencia, fin_vigencia=EXCLUDED.fin_vigencia, ejecutivo=EXCLUDED.ejecutivo
-                                """), {"pol": pol, "rfc": rfc, "aseg": aseg, "ini": ini, "fin": fin, "ejec": ejecutivo_excel})
-                            registros += 1
-                    st.success(f"🎉 ¡Misión cumplida! Se migraron {registros} clientes a tu nube."); st.balloons()
-                except Exception as e: st.error(f"Error técnico en el archivo: {e}")
-
-# ==========================================
-# PESTAÑA 7: EXPORTAR A DRIVE DEL CLIENTE
-# ==========================================
-with pestana7:
-    st.markdown("### ☁️ Respaldo Local (Para Google Drive)")
-    st.info("Tus datos viven seguros en la nube de Supabase. Sin embargo, si deseas tener una copia física en tu computadora para subirla a tu **Google Drive personal**, utiliza este botón. Se generará un archivo ZIP con todos tus registros en formato Excel (.csv).")
-    
-    if st.button("📦 Generar y Descargar Respaldo Total", type="primary"):
-        with st.spinner("Empaquetando toda la base de datos..."):
-            try:
-                df_c = pd.read_sql_query("SELECT * FROM Clientes", engine)
-                df_p = pd.read_sql_query("SELECT numero_poliza, rfc_cliente, aseguradora, tipo_producto, vehiculo, inicio_vigencia, fin_vigencia, ejecutivo FROM Polizas", engine)
-                df_r = pd.read_sql_query("SELECT * FROM Recibos", engine)
-                df_pr = pd.read_sql_query("SELECT * FROM Prospectos", engine)
-                
-                zip_buffer = io.BytesIO()
-                with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-                    zip_file.writestr("1_Clientes.csv", df_c.to_csv(index=False).encode('utf-8-sig'))
-                    zip_file.writestr("2_Polizas.csv", df_p.to_csv(index=False).encode('utf-8-sig'))
-                    zip_file.writestr("3_Recibos.csv", df_r.to_csv(index=False).encode('utf-8-sig'))
-                    zip_file.writestr("4_Prospectos.csv", df_pr.to_csv(index=False).encode('utf-8-sig'))
-                
-                st.success("¡Respaldo generado con éxito!")
-                st.download_button(
-                    label="📥 Guardar Archivo ZIP en mi Computadora",
-                    data=zip_buffer.getvalue(),
-                    file_name=f"Respaldo_Agentia_{datetime.now().strftime('%Y%m%d')}.zip",
-                    mime="application/zip",
-                    type="secondary"
-                )
-            except Exception as e:
-                st.error(f"Error al generar el respaldo: {e}")
 
 # ==========================================
 # FOOTER: FIRMA DEL CREADOR (POWERED BY)

@@ -116,11 +116,51 @@ def extraer_texto_pdf(archivo_pdf):
     except: return None
 
 def analizar_con_ia(texto_sucio):
-    instruccion = """Eres un experto en seguros. 1. Identifica "tipo_documento" ("Poliza" o "Recibo"). 2. Extrae: aseguradora, numero_poliza, nombre_cliente, rfc_cliente, telefono, correo, inicio_vigencia, fin_vigencia, direccion_completa. 3. Identifica "tipo_producto" (Autos, Gastos Médicos Mayores, Vida, Daños Empresariales, Hogar, u Otro). 4. Extrae en "vehiculo" (Marca, Modelo y Año si es auto, si no "N/A"). 5. Extrae cobranza: fecha_limite_pago, monto_a_pagar, y "forma_pago" (ej. Efectivo, Transferencia, Visa, Mastercard, Tarjeta de Credito, Amex, etc.). 6. Calcula "fecha_nacimiento" (DD/MM/AAAA) desde el RFC. Devuelve SOLO JSON válido sin markdown."""
+    instruccion = """
+    Eres un experto en seguros en México.
+    
+    1. Identifica "tipo_documento" ("Poliza" o "Recibo").
+    2. Extrae:
+       aseguradora,
+       numero_poliza,
+       nombre_cliente,
+       rfc_cliente,
+       telefono,
+       correo,
+       inicio_vigencia,
+       fin_vigencia,
+       direccion_completa.
+    3. Identifica "tipo_producto" (Autos, Gastos Médicos Mayores, Vida, Daños Empresariales, Hogar u Otro).
+    4. Extrae en "vehiculo" (Marca, Modelo y Año si es auto, si no "N/A").
+    5. Extrae cobranza:
+       fecha_limite_pago,
+       monto_a_pagar,
+       forma_pago.
+    6. Calcula "fecha_nacimiento" desde el RFC en formato DD/MM/AAAA.
+
+    Devuelve SOLO JSON válido. No agregues texto adicional.
+    """
+
     try:
-        response = client.models.generate_content(model='gemini-2.5-flash', contents=instruccion)
-        return json.loads(response.text.replace('```json', '').replace('```', '').strip())
-    except: return None
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=f"{instruccion}\n\nDocumento:\n{texto_sucio}"
+        )
+
+        texto_limpio = response.text.strip()
+        texto_limpio = texto_limpio.replace("```json", "").replace("```", "")
+
+        datos = json.loads(texto_limpio)
+
+        # Validación mínima
+        if "numero_poliza" not in datos:
+            return None
+
+        return datos
+
+    except Exception as e:
+        print("Error IA:", e)
+        return None
 
 def guardar_poliza_bd(datos, pdf_bytes=None, ejecutivo="Titular (Agencia)"):
     with engine.begin() as conn:
@@ -204,7 +244,7 @@ def generar_pdf_con_logos(df, titulo, fecha_inicio, fecha_fin):
 col_tit, col_vacia, col_der = st.columns([5, 1, 2])
 with col_tit:
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("<h1 style='color: #000000; margin-bottom: 0px;'>Sistema de Gestión Integral</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='color: #0b7af0; margin-bottom: 0px;'>Sistema de Gestión Integral</h1>", unsafe_allow_html=True)
     st.caption("Inteligencia para vender más")
 
 with col_der:
@@ -340,13 +380,22 @@ with pestana2:
                     with open(ruta_temp, "wb") as f: f.write(pdf_bytes)
                     try:
                         archivo_gemini = client.files.upload(file=ruta_temp)
-                        instruccion_vision = """Eres experto en seguros. 1. Identifica "tipo_documento" ("Poliza" o "Recibo"). 2. Extrae: aseguradora, numero_poliza, nombre_cliente, rfc_cliente, telefono, correo, inicio_vigencia, fin_vigencia, direccion_completa. 3. Identifica "tipo_producto" (Autos, Gastos Médicos, Vida, Daños, Hogar, Otro). 4. Extrae "vehiculo" (Marca, Modelo y Año). 5. Extrae cobranza: fecha_limite_pago, monto_a_pagar, y "forma_pago" (Visa, Mastercard, Credito, Debito, etc.). Calcula fecha_nacimiento (DD/MM/AAAA). Devuelve SOLO JSON válido."""
-                        response = client.models.generate_content(model='gemini-2.5-flash', contents=[archivo_gemini, instruccion_vision])
-                        datos_json = json.loads(response.text.replace('```json', '').replace('```', '').strip())
-                    except: datos_json = None
-                    if os.path.exists(ruta_temp): 
-                        try: os.remove(ruta_temp)
-                        except: pass
+
+                        response = client.models.generate_content(
+                        model="gemini-2.5-flash",
+                        contents=[
+                        archivo_gemini,
+                        instruccion_vision
+                 ]
+)
+
+                        texto_limpio = response.text.strip()
+                        texto_limpio = texto_limpio.replace("```json", "").replace("```", "")
+
+                        datos_json = json.loads(texto_limpio)
+                 except Exception as e:
+    print("Error guardando en BD:", e)
+    return False
                 
                 if datos_json:
                     resultado = guardar_poliza_bd(datos_json, pdf_bytes=pdf_bytes, ejecutivo=ejecutivo_seleccionado)
@@ -625,4 +674,3 @@ with col_centro:
         st.image("logo_creador.png", use_container_width=True)
     else:
         st.markdown("<h4 style='text-align: center; color: #555555;'>URCO Lab</h4>", unsafe_allow_html=True)
-

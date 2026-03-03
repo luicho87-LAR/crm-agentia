@@ -16,7 +16,7 @@ import zipfile
 st.set_page_config(page_title="Agentia CRM", layout="wide", page_icon="icono_agentia.png")
 
 # 🚨 ¡PEGA TU LLAVE AQUÍ ADENTRO DE LAS COMILLAS! 🚨
-API_KEY = st.secrets["GEMINI_API_KEY"]  
+API_KEY = st.secrets["GEMINI_API_KEY"] 
 client = genai.Client(api_key=API_KEY)
 
 # --- ✨ INYECCIÓN DE DISEÑO PREMIUM (UI/UX) ✨ ---
@@ -512,10 +512,9 @@ with pestana5:
         
         with col_r1:
             st.info("📈 **Ventas (Nuevas Pólizas)**")
-            # Corrección de mayúsculas/minúsculas para base de datos
-            df_ventas = pd.read_sql_query('SELECT c.nombre, p.aseguradora, p.numero_poliza, p.inicio_vigencia, p.ejecutivo FROM Polizas p JOIN Clientes c ON p.rfc_cliente = c.rfc', engine)
+            # Corrección definitiva: Forzamos los nombres de columnas desde SQL
+            df_ventas = pd.read_sql_query('SELECT c.nombre AS "Cliente", p.aseguradora AS "Aseguradora", p.numero_poliza AS "Poliza", p.inicio_vigencia AS "Inicio", p.ejecutivo AS "Ejecutivo" FROM Polizas p JOIN Clientes c ON p.rfc_cliente = c.rfc', engine)
             if not df_ventas.empty:
-                df_ventas.columns = ['Cliente', 'Aseguradora', 'Poliza', 'Inicio', 'Ejecutivo']
                 df_ventas['fecha_dt'] = pd.to_datetime(df_ventas['Inicio'], format='%d/%m/%Y', errors='coerce')
                 df_ventas_filtrado = df_ventas.loc[(df_ventas['fecha_dt'].dt.date >= fecha_inicio) & (df_ventas['fecha_dt'].dt.date <= fecha_fin)].drop(columns=['fecha_dt'])
                 if filtro_ejecutivo != "Todos los Ejecutivos": df_ventas_filtrado = df_ventas_filtrado[df_ventas_filtrado['Ejecutivo'] == filtro_ejecutivo]
@@ -527,10 +526,9 @@ with pestana5:
             
         with col_r2:
             st.info("💰 **Historial de Cobranza**")
-            # Corrección de mayúsculas/minúsculas para base de datos
-            df_cob = pd.read_sql_query('SELECT c.nombre, p.aseguradora, r.monto, r.fecha_limite, r.estado, p.ejecutivo FROM Recibos r JOIN Polizas p ON r.numero_poliza = p.numero_poliza JOIN Clientes c ON p.rfc_cliente = c.rfc', engine)
+            # Corrección definitiva: Forzamos los nombres de columnas desde SQL
+            df_cob = pd.read_sql_query('SELECT c.nombre AS "Cliente", p.aseguradora AS "Aseguradora", r.monto AS "Monto", r.fecha_limite AS "Limite", r.estado AS "Estatus", p.ejecutivo AS "Ejecutivo" FROM Recibos r JOIN Polizas p ON r.numero_poliza = p.numero_poliza JOIN Clientes c ON p.rfc_cliente = c.rfc', engine)
             if not df_cob.empty:
-                df_cob.columns = ['Cliente', 'Aseguradora', 'Monto', 'Limite', 'Estatus', 'Ejecutivo']
                 df_cob['fecha_dt'] = pd.to_datetime(df_cob['Limite'], format='%d/%m/%Y', errors='coerce')
                 df_cob_filtrado = df_cob.loc[(df_cob['fecha_dt'].dt.date >= fecha_inicio) & (df_cob['fecha_dt'].dt.date <= fecha_fin)].drop(columns=['fecha_dt'])
                 if filtro_ejecutivo != "Todos los Ejecutivos": df_cob_filtrado = df_cob_filtrado[df_cob_filtrado['Ejecutivo'] == filtro_ejecutivo]
@@ -543,10 +541,9 @@ with pestana5:
             
         with col_r3:
             st.info("🎯 **Efectividad Prospectos**")
-            # Corrección de mayúsculas/minúsculas para base de datos
-            df_prosp = pd.read_sql_query('SELECT nombre, producto, fecha_cotizacion, ejecutivo FROM Prospectos', engine)
+            # Corrección definitiva: Forzamos los nombres de columnas desde SQL
+            df_prosp = pd.read_sql_query('SELECT nombre AS "Prospecto", producto AS "Producto", fecha_cotizacion AS "Fecha", ejecutivo AS "Ejecutivo" FROM Prospectos', engine)
             if not df_prosp.empty:
-                df_prosp.columns = ['Prospecto', 'Producto', 'Fecha', 'Ejecutivo']
                 df_prosp['fecha_dt'] = pd.to_datetime(df_prosp['Fecha'], format='%Y-%m-%d', errors='coerce')
                 df_prosp_filtrado = df_prosp.loc[(df_prosp['fecha_dt'].dt.date >= fecha_inicio) & (df_prosp['fecha_dt'].dt.date <= fecha_fin)].drop(columns=['fecha_dt'])
                 if filtro_ejecutivo != "Todos los Ejecutivos": df_prosp_filtrado = df_prosp_filtrado[df_prosp_filtrado['Ejecutivo'] == filtro_ejecutivo]

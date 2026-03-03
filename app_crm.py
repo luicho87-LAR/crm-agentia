@@ -16,7 +16,7 @@ import zipfile
 st.set_page_config(page_title="Agentia CRM", layout="wide", page_icon="icono_agentia.png")
 
 # 🚨 ¡PEGA TU LLAVE AQUÍ ADENTRO DE LAS COMILLAS! 🚨
-API_KEY = st.secrets["GEMINI_API_KEY"]  
+API_KEY = st.secrets["GEMINI_API_KEY"] 
 client = genai.Client(api_key=API_KEY)
 
 # --- ✨ INYECCIÓN DE DISEÑO PREMIUM (UI/UX) ✨ ---
@@ -115,80 +115,106 @@ def extraer_texto_pdf(archivo_pdf):
         return texto_completo
     except: return None
 
+def limpiar_json(texto):
+    try:
+        if not texto: return None
+        texto_limpio = str(texto)
+        inicio_obj = texto_limpio.find('{')
+        fin_obj = texto_limpio.rfind('}') + 1
+        inicio_arr = texto_limpio.find('[')
+        fin_arr = texto_limpio.rfind(']') + 1
+        
+        if inicio_obj != -1 and fin_obj > 0 and (inicio_arr == -1 or inicio_obj < inicio_arr):
+            return json.loads(texto_limpio[inicio_obj:fin_obj])
+        elif inicio_arr != -1 and fin_arr > 0:
+            arr = json.loads(texto_limpio[inicio_arr:fin_arr])
+            if isinstance(arr, list) and len(arr) > 0: return arr[0]
+        return None
+    except:
+        return None
+
 def analizar_con_ia(texto_sucio):
-    instruccion = """Eres un experto en seguros. 1. Identifica "tipo_documento" ("Poliza" o "Recibo"). 2. Extrae: aseguradora, numero_poliza, nombre_cliente, rfc_cliente, telefono, correo, inicio_vigencia, fin_vigencia, direccion_completa. 3. Identifica "tipo_producto" (Autos, Gastos Médicos Mayores, Vida, Daños Empresariales, Hogar, u Otro). 4. Extrae en "vehiculo" (Marca, Modelo y Año si es auto, si no "N/A"). 5. Extrae cobranza: fecha_limite_pago, monto_a_pagar, y "forma_pago" (ej. Efectivo, Transferencia, Visa, Mastercard, Tarjeta de Credito, Amex, etc.). 6. Calcula "fecha_nacimiento" (DD/MM/AAAA) desde el RFC. Devuelve SOLO JSON válido sin markdown."""
+    instruccion = """Eres un experto en seguros. 1. Identifica "tipo_documento" ("Poliza" o "Recibo"). 2. Extrae: aseguradora, numero_poliza, nombre_cliente, rfc_cliente, telefono, correo, inicio_vigencia, fin_vigencia, direccion_completa. 3. Identifica "tipo_producto" (Autos, Gastos Médicos Mayores, Vida, Daños Empresariales, Hogar, u Otro). 4. Extrae en "vehiculo" (DEBE SER UN TEXTO PLANO con Marca, Modelo y Año si es auto, si no "N/A"). 5. Extrae cobranza: fecha_limite_pago, monto_a_pagar, y "forma_pago" (ej. Efectivo, Transferencia, Visa, Mastercard, Tarjeta de Credito, Amex). 6. Calcula "fecha_nacimiento" (DD/MM/AAAA) desde el RFC. Devuelve SOLO JSON válido sin markdown."""
     try:
         prompt_completo = f"{instruccion}\n\n--- DOCUMENTO ---\n{texto_sucio}"
         response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt_completo)
-        
-        texto_limpio = response.text
-        # Blindaje para sacar SOLO el JSON válido aunque la IA escriba texto extra
-        inicio = texto_limpio.find('{')
-        fin = texto_limpio.rfind('}') + 1
-        if inicio != -1 and fin > 0:
-            json_puro = texto_limpio[inicio:fin]
-            return json.loads(json_puro)
-        return None
+        return limpiar_json(response.text)
     except Exception as e: 
         return None
 
 def guardar_poliza_bd(datos, pdf_bytes=None, ejecutivo="Titular (Agencia)"):
+    if not isinstance(datos, dict):
+        return f"Error de IA: El formato devuelto no es un diccionario válido. Se obtuvo: {type(datos)}"
+        
     with engine.begin() as conn:
         try:
-            tipo_doc = datos.get('tipo_documento', 'Poliza')
+            tipo_doc = str(datos.get('tipo_documento', 'Poliza'))
             
-            # Salvavidas para RFC
             rfc = str(datos.get('rfc_cliente', '')).strip()
-            if not rfc or rfc.lower() in ['no especificado', 'none', 'null']: 
+            if not rfc or rfc.lower() in ['no especificado', 'none', 'null', 'na']: 
                 rfc = f"SIN_RFC_{datetime.now().strftime('%Y%m%d%H%M%S')}"
                 
-            # Salvavidas para Póliza
             num_pol = str(datos.get('numero_poliza', '')).strip()
-            if not num_pol or num_pol.lower() in ['no especificado', 'none', 'null', '']:
+            if not num_pol or num_pol.lower() in ['no especificado', 'none', 'null', '', 'na']:
                 num_pol = f"POR_ASIGNAR_{datetime.now().strftime('%H%M%S')}"
+            
+            nom = str(datos.get('nombre_cliente', 'No especificado'))
+            tel = str(datos.get('telefono', 'No especificado'))
+            cor = str(datos.get('correo', 'No especificado'))
+            fec = str(datos.get('fecha_nacimiento', 'No especificado'))
+            direc = str(datos.get('direccion_completa', 'No especificada'))
             
             conn.execute(text("""
                 INSERT INTO Clientes (rfc, nombre, telefono, correo, fecha_nacimiento, direccion) 
                 VALUES (:rfc, :nom, :tel, :cor, :fec, :dir) 
                 ON CONFLICT (rfc) DO UPDATE SET 
                 nombre=EXCLUDED.nombre, telefono=EXCLUDED.telefono, correo=EXCLUDED.correo, direccion=EXCLUDED.direccion
-            """), {"rfc": rfc, "nom": datos.get('nombre_cliente'), "tel": datos.get('telefono'), "cor": datos.get('correo'), "fec": datos.get('fecha_nacimiento', 'No especificado'), "dir": datos.get('direccion_completa', 'No especificada')})
+            """), {"rfc": rfc, "nom": nom, "tel": tel, "cor": cor, "fec": fec, "dir": direc})
             
-            prod = datos.get('tipo_producto', 'No especificado')
+            prod = str(datos.get('tipo_producto', 'No especificado'))
             veh = datos.get('vehiculo', 'N/A')
+            if isinstance(veh, dict):
+                veh = " ".join([str(v) for v in veh.values()])
+            elif isinstance(veh, list):
+                veh = ", ".join([str(v) for v in veh])
+            else:
+                veh = str(veh)
             
-            if tipo_doc == 'Poliza':
+            aseg = str(datos.get('aseguradora', 'No especificado'))
+            ini = str(datos.get('inicio_vigencia', 'No especificado'))
+            fin = str(datos.get('fin_vigencia', 'No especificado'))
+            
+            if 'poliza' in tipo_doc.lower():
                 conn.execute(text("""
                     INSERT INTO Polizas (numero_poliza, rfc_cliente, aseguradora, inicio_vigencia, fin_vigencia, archivo_pdf, ejecutivo, tipo_producto, vehiculo) 
                     VALUES (:pol, :rfc, :aseg, :ini, :fin, :pdf, :ejec, :prod, :veh)
                     ON CONFLICT (numero_poliza) DO UPDATE SET 
                     inicio_vigencia=EXCLUDED.inicio_vigencia, fin_vigencia=EXCLUDED.fin_vigencia, archivo_pdf=EXCLUDED.archivo_pdf, ejecutivo=EXCLUDED.ejecutivo, tipo_producto=EXCLUDED.tipo_producto, vehiculo=EXCLUDED.vehiculo
-                """), {"pol": num_pol, "rfc": rfc, "aseg": datos.get('aseguradora'), "ini": datos.get('inicio_vigencia'), "fin": datos.get('fin_vigencia'), "pdf": pdf_bytes, "ejec": ejecutivo, "prod": prod, "veh": veh})
+                """), {"pol": num_pol, "rfc": rfc, "aseg": aseg, "ini": ini, "fin": fin, "pdf": pdf_bytes, "ejec": ejecutivo, "prod": prod, "veh": veh})
             else:
                 conn.execute(text("""
                     INSERT INTO Polizas (numero_poliza, rfc_cliente, aseguradora, inicio_vigencia, fin_vigencia, archivo_pdf, ejecutivo, tipo_producto, vehiculo) 
                     VALUES (:pol, :rfc, :aseg, :ini, :fin, :pdf, :ejec, :prod, :veh)
                     ON CONFLICT (numero_poliza) DO NOTHING
-                """), {"pol": num_pol, "rfc": rfc, "aseg": datos.get('aseguradora'), "ini": datos.get('inicio_vigencia'), "fin": datos.get('fin_vigencia'), "pdf": pdf_bytes, "ejec": ejecutivo, "prod": prod, "veh": veh})
+                """), {"pol": num_pol, "rfc": rfc, "aseg": aseg, "ini": ini, "fin": fin, "pdf": pdf_bytes, "ejec": ejecutivo, "prod": prod, "veh": veh})
             
             fecha_pago = datos.get('fecha_limite_pago')
-            if fecha_pago and str(fecha_pago).lower() not in ['no especificado', 'none', '']:
+            if fecha_pago and str(fecha_pago).lower() not in ['no especificado', 'none', 'null', 'na', '']:
                 monto = formato_pesos(datos.get('monto_a_pagar', 'No especificado'))
                 forma_pago = str(datos.get('forma_pago', '')).lower()
                 
-                # Inteligencia de Tarjetas
                 tarjetas_clave = ['visa', 'master', 'amex', 'tarjeta', 'credito', 'debito', 'cargo']
                 if any(palabra in forma_pago for palabra in tarjetas_clave):
                     estado_recibo = 'Cargo Automático'
                 else:
                     estado_recibo = 'Pendiente'
                 
-                res = conn.execute(text("SELECT id FROM Recibos WHERE numero_poliza=:pol AND fecha_limite=:fec"), {"pol": num_pol, "fec": fecha_pago}).fetchone()
+                res = conn.execute(text("SELECT id FROM Recibos WHERE numero_poliza=:pol AND fecha_limite=:fec"), {"pol": num_pol, "fec": str(fecha_pago)}).fetchone()
                 if not res:
-                    conn.execute(text("INSERT INTO Recibos (numero_poliza, fecha_limite, monto, estado) VALUES (:pol, :fec, :mon, :est)"), {"pol": num_pol, "fec": fecha_pago, "mon": monto, "est": estado_recibo})
+                    conn.execute(text("INSERT INTO Recibos (numero_poliza, fecha_limite, monto, estado) VALUES (:pol, :fec, :mon, :est)"), {"pol": num_pol, "fec": str(fecha_pago), "mon": monto, "est": estado_recibo})
             return tipo_doc
         except Exception as e:
-            return False
+            return f"Error SQL: {str(e)}"
 
 def generar_pdf_con_logos(df, titulo, fecha_inicio, fecha_fin):
     pdf = FPDF(orientation='L', unit='mm', format='A4')
@@ -413,6 +439,7 @@ with pestana2:
                 texto_crudo = extraer_texto_pdf(archivo)
                 datos_json = None
                 pdf_bytes = archivo.getvalue()
+                error_api = ""
                 
                 if texto_crudo and len(texto_crudo.strip()) > 20: 
                     datos_json = analizar_con_ia(texto_crudo)
@@ -421,33 +448,35 @@ with pestana2:
                     with open(ruta_temp, "wb") as f: f.write(pdf_bytes)
                     try:
                         archivo_gemini = client.files.upload(file=ruta_temp)
-                        instruccion_vision = """Eres experto en seguros. 1. Identifica "tipo_documento" ("Poliza" o "Recibo"). 2. Extrae: aseguradora, numero_poliza, nombre_cliente, rfc_cliente, telefono, correo, inicio_vigencia, fin_vigencia, direccion_completa. 3. Identifica "tipo_producto" (Autos, Gastos Médicos, Vida, Daños, Hogar, Otro). 4. Extrae "vehiculo" (Marca, Modelo y Año). 5. Extrae cobranza: fecha_limite_pago, monto_a_pagar, y "forma_pago" (Visa, Mastercard, Credito, Debito, etc.). Calcula fecha_nacimiento (DD/MM/AAAA). Devuelve SOLO JSON válido."""
+                        instruccion_vision = """Eres experto en seguros. 1. Identifica "tipo_documento" ("Poliza" o "Recibo"). 2. Extrae: aseguradora, numero_poliza, nombre_cliente, rfc_cliente, telefono, correo, inicio_vigencia, fin_vigencia, direccion_completa. 3. Identifica "tipo_producto" (Autos, Gastos Médicos, Vida, Daños, Hogar, Otro). 4. Extrae "vehiculo" (DEBE SER UN TEXTO PLANO con Marca, Modelo y Año). 5. Extrae cobranza: fecha_limite_pago, monto_a_pagar, y "forma_pago" (Visa, Mastercard, Credito, Debito, etc.). Calcula fecha_nacimiento (DD/MM/AAAA). Devuelve SOLO JSON válido."""
                         response = client.models.generate_content(model='gemini-2.5-flash', contents=[archivo_gemini, instruccion_vision])
-                        
-                        texto_limpio = response.text
-                        inicio = texto_limpio.find('{')
-                        fin = texto_limpio.rfind('}') + 1
-                        if inicio != -1 and fin > 0:
-                            json_puro = texto_limpio[inicio:fin]
-                            datos_json = json.loads(json_puro)
-                        else:
-                            datos_json = None
-                    except: datos_json = None
-                    if os.path.exists(ruta_temp): 
-                        try: os.remove(ruta_temp)
-                        except: pass
+                        datos_json = limpiar_json(response.text)
+                    except Exception as e:
+                        error_api = str(e)
+                        datos_json = None
+                    finally:
+                        if os.path.exists(ruta_temp): 
+                            try: os.remove(ruta_temp)
+                            except: pass
                 
                 if datos_json:
                     resultado = guardar_poliza_bd(datos_json, pdf_bytes=pdf_bytes, ejecutivo=ejecutivo_seleccionado)
-                    if resultado: exitos += 1
-                    else: errores += 1
-                else: errores += 1
+                    if isinstance(resultado, str) and not resultado.startswith("Error"): 
+                        exitos += 1
+                    else: 
+                        errores += 1
+                        st.error(f"🛑 Error guardando {archivo.name} en BD: {resultado}")
+                else: 
+                    errores += 1
+                    razon = f"Motivo: {error_api}" if error_api else "La IA no pudo estructurar la información."
+                    st.error(f"⚠️ {archivo.name} fue ilegible. {razon}")
             barra_progreso.progress((i + 1) / total_archivos)
             
         if errores == 0:
             st.success(f"✅ ¡Se procesaron y automatizaron {exitos} documentos con éxito!")
             st.balloons()
-        else: st.warning(f"⚠️ {exitos} guardados exitosamente. Hubo {errores} archivos ilegibles por falta de datos clave.")
+        else: 
+            st.warning(f"⚠️ {exitos} guardados exitosamente. Hubo {errores} archivos con error. (Revisa los mensajes rojos arriba para más detalles).")
 
 # ==========================================
 # PESTAÑA 3: PROSPECTOS MANUALES

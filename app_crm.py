@@ -82,7 +82,6 @@ def inicializar_bd_completa():
         conn.execute(text('''CREATE TABLE IF NOT EXISTS Recibos (id SERIAL PRIMARY KEY, numero_poliza TEXT, fecha_limite TEXT, monto TEXT, estado TEXT DEFAULT 'Pendiente')'''))
         conn.execute(text('''CREATE TABLE IF NOT EXISTS Ejecutivos (id SERIAL PRIMARY KEY, nombre TEXT UNIQUE)'''))
         
-        # Crear columnas si la tabla ya existía de versiones anteriores
         conn.execute(text('''ALTER TABLE Polizas ADD COLUMN IF NOT EXISTS tipo_producto TEXT DEFAULT 'No especificado' '''))
         conn.execute(text('''ALTER TABLE Polizas ADD COLUMN IF NOT EXISTS vehiculo TEXT DEFAULT 'N/A' '''))
         
@@ -117,8 +116,7 @@ def extraer_texto_pdf(archivo_pdf):
     except: return None
 
 def analizar_con_ia(texto_sucio):
-    # INSTRUCCIÓN ESTRICTA DE AUTOMATIZACIÓN PARA LA IA
-    instruccion = """Eres un experto en seguros. 1. Identifica "tipo_documento" ("Poliza" o "Recibo"). 2. Extrae: aseguradora, numero_poliza, nombre_cliente, rfc_cliente, telefono, correo, inicio_vigencia, fin_vigencia, direccion_completa. 3. Identifica estrictamente el "tipo_producto" (Elige uno: Autos, Gastos Médicos Mayores, Vida, Daños Empresariales, Hogar, u Otro). 4. Si el tipo_producto es Autos, extrae en "vehiculo" la Marca, Modelo y Año (Ej. Nissan Versa 2023). Si NO es auto, pon "N/A" en vehiculo. 5. Para cobranza extrae: fecha_limite_pago, monto_a_pagar. Calcula "fecha_nacimiento" (formato DD/MM/AAAA) desde el RFC. Devuelve SOLO JSON válido sin markdown."""
+    instruccion = """Eres un experto en seguros. 1. Identifica "tipo_documento" ("Poliza" o "Recibo"). 2. Extrae: aseguradora, numero_poliza, nombre_cliente, rfc_cliente, telefono, correo, inicio_vigencia, fin_vigencia, direccion_completa. 3. Identifica "tipo_producto" (Autos, Gastos Médicos Mayores, Vida, Daños Empresariales, Hogar, u Otro). 4. Extrae en "vehiculo" (Marca, Modelo y Año si es auto, si no "N/A"). 5. Extrae cobranza: fecha_limite_pago, monto_a_pagar, y "forma_pago" (ej. Efectivo, Transferencia, Visa, Mastercard, Tarjeta de Credito, Amex, etc.). 6. Calcula "fecha_nacimiento" (DD/MM/AAAA) desde el RFC. Devuelve SOLO JSON válido sin markdown."""
     try:
         response = client.models.generate_content(model='gemini-2.5-flash', contents=instruccion)
         return json.loads(response.text.replace('```json', '').replace('```', '').strip())
@@ -159,9 +157,18 @@ def guardar_poliza_bd(datos, pdf_bytes=None, ejecutivo="Titular (Agencia)"):
             fecha_pago = datos.get('fecha_limite_pago')
             if fecha_pago and fecha_pago.lower() not in ['no especificado', 'none', '']:
                 monto = formato_pesos(datos.get('monto_a_pagar', 'No especificado'))
+                forma_pago = str(datos.get('forma_pago', '')).lower()
+                
+                # Inteligencia de detección de Tarjetas para evitar cobranza manual
+                tarjetas_clave = ['visa', 'master', 'amex', 'tarjeta', 'credito', 'debito', 'cargo']
+                if any(palabra in forma_pago for palabra en tarjetas_clave):
+                    estado_recibo = 'Cargo Automático'
+                else:
+                    estado_recibo = 'Pendiente'
+                
                 res = conn.execute(text("SELECT id FROM Recibos WHERE numero_poliza=:pol AND fecha_limite=:fec"), {"pol": num_pol, "fec": fecha_pago}).fetchone()
                 if not res:
-                    conn.execute(text("INSERT INTO Recibos (numero_poliza, fecha_limite, monto, estado) VALUES (:pol, :fec, :mon, 'Pendiente')"), {"pol": num_pol, "fec": fecha_pago, "mon": monto})
+                    conn.execute(text("INSERT INTO Recibos (numero_poliza, fecha_limite, monto, estado) VALUES (:pol, :fec, :mon, :est)"), {"pol": num_pol, "fec": fecha_pago, "mon": monto, "est": estado_recibo})
             return tipo_doc
         except Exception as e:
             return False
@@ -228,7 +235,7 @@ pestana1, pestana2, pestana3, pestana4, pestana5, pestana6, pestana7 = st.tabs([
 ])
 
 # ==========================================
-# PESTAÑA 1: BUSCADOR VIP (AHORA MUESTRA Ramo y Vehículo Automáticos)
+# PESTAÑA 1: BUSCADOR VIP 
 # ==========================================
 with pestana1:
     st.markdown("### 📇 Archivo Digital de Clientes")
@@ -265,7 +272,6 @@ with pestana1:
                                 st.success("¡Actualizado!"); st.rerun()
 
                     st.markdown("#### 📑 Pólizas Activas")
-                    # AQUÍ SE MUESTRAN LAS COLUMNAS AUTOMATIZADAS DE PRODUCTO Y VEHÍCULO
                     df_polizas = pd.read_sql_query(f'SELECT aseguradora as "Aseguradora", numero_poliza as "Poliza", tipo_producto as "Ramo", vehiculo as "Vehículo", inicio_vigencia as "Inicio", fin_vigencia as "Fin", ejecutivo as "Ejecutivo" FROM Polizas WHERE rfc_cliente = \'{cliente["rfc"]}\'', engine)
                     if not df_polizas.empty:
                         st.dataframe(df_polizas, use_container_width=True, hide_index=True)
@@ -278,16 +284,30 @@ with pestana1:
                                 if pdf_data: st.download_button(label=f"📄 {poliza['Poliza']}", data=bytes(pdf_data), file_name=f"Doc_{poliza['Poliza'].replace('/','_')}.pdf", mime="application/pdf", key=f"dl_{poliza['Poliza']}_{idx}")
                                 else: st.caption(f"🚫 Sin PDF en bóveda")
                         st.markdown("---")
-                        with st.popover("➕ Cargar recibo manual"):
-                            with st.form(f"form_recibo_{cliente['rfc']}"):
-                                poliza_sel = st.selectbox("Selecciona la póliza", df_polizas['Poliza'].tolist())
-                                monto_recibo = st.text_input("Monto a pagar (Ej. 1500)")
-                                fecha_recibo = st.date_input("Fecha límite de pago")
-                                if st.form_submit_button("Guardar Recibo"):
-                                    monto_limpio = formato_pesos(monto_recibo)
-                                    with engine.begin() as conn:
-                                        conn.execute(text("INSERT INTO Recibos (numero_poliza, fecha_limite, monto, estado) VALUES (:pol, :fec, :mon, 'Pendiente')"), {"pol": poliza_sel, "fec": fecha_recibo.strftime("%d/%m/%Y"), "mon": monto_limpio})
-                                    st.success("Recibo agregado"); st.rerun()
+                        col_btn1, col_btn2 = st.columns(2)
+                        with col_btn1:
+                            with st.popover("➕ Cargar recibo manual"):
+                                with st.form(f"form_recibo_{cliente['rfc']}"):
+                                    poliza_sel = st.selectbox("Selecciona la póliza", df_polizas['Poliza'].tolist())
+                                    monto_recibo = st.text_input("Monto a pagar (Ej. 1500)")
+                                    fecha_recibo = st.date_input("Fecha límite de pago")
+                                    if st.form_submit_button("Guardar Recibo"):
+                                        monto_limpio = formato_pesos(monto_recibo)
+                                        with engine.begin() as conn:
+                                            conn.execute(text("INSERT INTO Recibos (numero_poliza, fecha_limite, monto, estado) VALUES (:pol, :fec, :mon, 'Pendiente')"), {"pol": poliza_sel, "fec": fecha_recibo.strftime("%d/%m/%Y"), "mon": monto_limpio})
+                                        st.success("Recibo agregado"); st.rerun()
+                        
+                        with col_btn2:
+                            with st.popover("🏷️ Clasificar Póliza / Vehículo"):
+                                with st.form(f"form_etiquetas_{cliente['rfc']}"):
+                                    poliza_clasificar = st.selectbox("Selecciona la póliza a clasificar", df_polizas['Poliza'].tolist())
+                                    nuevo_prod = st.selectbox("Tipo de Producto", ["Autos", "Gastos Médicos Mayores", "Vida", "Daños Empresariales", "Hogar", "Otro"])
+                                    nuevo_veh = st.text_input("Etiqueta del Vehículo (Solo si es Auto, ej. Nissan Versa 2023)")
+                                    if st.form_submit_button("Guardar Clasificación"):
+                                        with engine.begin() as conn:
+                                            conn.execute(text("UPDATE Polizas SET tipo_producto=:prod, vehiculo=:veh WHERE numero_poliza=:pol"), {"prod": nuevo_prod, "veh": nuevo_veh, "pol": poliza_clasificar})
+                                        st.success("Etiquetas actualizadas"); st.rerun()
+                                        
                     else: st.warning("Este cliente no tiene pólizas registradas.")
         else: st.info("No se encontró ningún cliente con esos datos.")
 
@@ -320,7 +340,7 @@ with pestana2:
                     with open(ruta_temp, "wb") as f: f.write(pdf_bytes)
                     try:
                         archivo_gemini = client.files.upload(file=ruta_temp)
-                        instruccion_vision = """Eres experto en seguros. 1. Identifica "tipo_documento" ("Poliza" o "Recibo"). 2. Extrae: aseguradora, numero_poliza, nombre_cliente, rfc_cliente, telefono, correo, inicio_vigencia, fin_vigencia, direccion_completa. 3. Identifica estrictamente el "tipo_producto" (Autos, Gastos Médicos Mayores, Vida, Daños Empresariales, Hogar, u Otro). 4. Si el producto es Autos, extrae en "vehiculo" la Marca, Modelo y Año. Si no, pon "N/A". 5. Extrae cobranza. Calcula fecha_nacimiento (DD/MM/AAAA). Devuelve SOLO JSON válido."""
+                        instruccion_vision = """Eres experto en seguros. 1. Identifica "tipo_documento" ("Poliza" o "Recibo"). 2. Extrae: aseguradora, numero_poliza, nombre_cliente, rfc_cliente, telefono, correo, inicio_vigencia, fin_vigencia, direccion_completa. 3. Identifica "tipo_producto" (Autos, Gastos Médicos, Vida, Daños, Hogar, Otro). 4. Extrae "vehiculo" (Marca, Modelo y Año). 5. Extrae cobranza: fecha_limite_pago, monto_a_pagar, y "forma_pago" (Visa, Mastercard, Credito, Debito, etc.). Calcula fecha_nacimiento (DD/MM/AAAA). Devuelve SOLO JSON válido."""
                         response = client.models.generate_content(model='gemini-2.5-flash', contents=[archivo_gemini, instruccion_vision])
                         datos_json = json.loads(response.text.replace('```json', '').replace('```', '').strip())
                     except: datos_json = None
@@ -422,7 +442,7 @@ with pestana4:
                     with engine.begin() as conn:
                         conn.execute(text("UPDATE Recibos SET estado = 'Pagado' WHERE id = :id"), {"id": id_recibo})
                     st.success("¡El pago se ha registrado exitosamente!"); st.rerun()
-    else: st.success("¡Felicidades! Tienes cartera sana, no hay recibos pendientes de cobro.")
+    else: st.success("¡Felicidades! Tienes cartera sana, no hay recibos pendientes de cobro manual.")
         
     st.markdown("---")
     st.markdown("### 🎂 Cumpleañeros del Mes")
@@ -439,7 +459,7 @@ with pestana4:
                 mensajes_cumple = []
                 for index, fila in cumpleañeros.iterrows():
                     tel = str(fila['telefono']).replace(' ','').replace('-','')
-                    msj = f"¡Hola {fila['nombre']}! 🎉 Hoy no podía dejar pasar la oportunidad de desearte un muy feliz cumpleaños. Que este nuevo año de vida venga con mucha salud, tranquilidad, éxitos y momentos increíbles junto a las personas que más quieres."
+                    msj = f"¡Hola {fila['nombre']}! 🎉 De parte de todo nuestro equipo, te deseamos un muy Feliz Cumpleaños. Que pases un excelente día lleno de alegría."
                     mensajes_cumple.append(f"https://wa.me/52{tel}?text={urllib.parse.quote(msj)}")
                 cumpleañeros['Felicitar'] = mensajes_cumple
                 st.dataframe(cumpleañeros[['nombre', 'fecha_nacimiento', 'telefono', 'Felicitar']], column_config={"Felicitar": st.column_config.LinkColumn("🎁 Enviar Felicitación")}, hide_index=True, use_container_width=True)
@@ -589,6 +609,7 @@ with pestana7:
                 )
             except Exception as e:
                 st.error(f"Error al generar el respaldo: {e}")
+
 # ==========================================
 # FOOTER: FIRMA DEL CREADOR (POWERED BY)
 # ==========================================
@@ -599,9 +620,8 @@ col_izq, col_centro, col_der = st.columns([4, 2, 4])
 with col_centro:
     st.markdown("<p style='text-align: center; color: #888888; font-size: 13px; margin-bottom: 5px;'>Powered by:</p>", unsafe_allow_html=True)
     
-    # 🚨 Cambia "logo_creador.png" por el nombre real de tu archivo de logo
+    # 🚨 Cambia "logo_creador.png" por el nombre real de tu archivo de logo en GitHub si lo tienes
     if os.path.exists("logo_creador.png"):
         st.image("logo_creador.png", use_container_width=True)
     else:
-        st.markdown("<h4 style='text-align: center; color: #555555;'>Tu Agencia</h4>", unsafe_allow_html=True)
-
+        st.markdown("<h4 style='text-align: center; color: #555555;'>URCO Lab</h4>", unsafe_allow_html=True)

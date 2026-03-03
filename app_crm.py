@@ -16,7 +16,7 @@ import zipfile
 st.set_page_config(page_title="Agentia CRM", layout="wide", page_icon="icono_agentia.png")
 
 # 🚨 ¡PEGA TU LLAVE AQUÍ ADENTRO DE LAS COMILLAS! 🚨
-API_KEY = st.secrets["GEMINI_API_KEY"] 
+API_KEY = st.secrets["GEMINI_API_KEY"]  
 client = genai.Client(api_key=API_KEY)
 
 # --- ✨ INYECCIÓN DE DISEÑO PREMIUM (UI/UX) ✨ ---
@@ -122,15 +122,13 @@ def analizar_con_ia(texto_sucio):
         response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt_completo)
         
         texto_limpio = response.text
-        # Limpieza segura para evitar errores de parseo markdown
-        marcador_json = "```" + "json"
-        marcador_fin = "```"
-        if marcador_json in texto_limpio:
-            texto_limpio = texto_limpio.split(marcador_json)[1].split(marcador_fin)[0]
-        elif marcador_fin in texto_limpio:
-            texto_limpio = texto_limpio.split(marcador_fin)[1].split(marcador_fin)[0]
-            
-        return json.loads(texto_limpio.strip())
+        # Blindaje para sacar SOLO el JSON válido aunque la IA escriba texto extra
+        inicio = texto_limpio.find('{')
+        fin = texto_limpio.rfind('}') + 1
+        if inicio != -1 and fin > 0:
+            json_puro = texto_limpio[inicio:fin]
+            return json.loads(json_puro)
+        return None
     except Exception as e: 
         return None
 
@@ -178,7 +176,7 @@ def guardar_poliza_bd(datos, pdf_bytes=None, ejecutivo="Titular (Agencia)"):
                 monto = formato_pesos(datos.get('monto_a_pagar', 'No especificado'))
                 forma_pago = str(datos.get('forma_pago', '')).lower()
                 
-                # Inteligencia de Tarjetas (CORREGIDO LA SINTAXIS "in")
+                # Inteligencia de Tarjetas
                 tarjetas_clave = ['visa', 'master', 'amex', 'tarjeta', 'credito', 'debito', 'cargo']
                 if any(palabra in forma_pago for palabra in tarjetas_clave):
                     estado_recibo = 'Cargo Automático'
@@ -223,7 +221,7 @@ def generar_pdf_con_logos(df, titulo, fecha_inicio, fecha_fin):
 col_tit, col_vacia, col_der = st.columns([5, 1, 2])
 with col_tit:
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("<h1 style='color: #000000; margin-bottom: 0px;'>Sistema de Gestión Integral</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='color: #0b7af0; margin-bottom: 0px;'>Sistema de Gestión Integral</h1>", unsafe_allow_html=True)
     st.caption("Inteligencia para vender más")
 
 with col_der:
@@ -291,8 +289,10 @@ with pestana1:
                                 st.success("¡Actualizado!"); st.rerun()
 
                     st.markdown("#### 📑 Pólizas Activas")
-                    df_polizas = pd.read_sql_query(f'SELECT aseguradora as "Aseguradora", numero_poliza as "Poliza", tipo_producto as "Ramo", vehiculo as "Vehículo", inicio_vigencia as "Inicio", fin_vigencia as "Fin", ejecutivo as "Ejecutivo" FROM Polizas WHERE rfc_cliente = \'{cliente["rfc"]}\'', engine)
+                    # Corrección robusta de mayúsculas para las columnas de la tabla
+                    df_polizas = pd.read_sql_query(f"SELECT aseguradora, numero_poliza, tipo_producto, vehiculo, inicio_vigencia, fin_vigencia, ejecutivo FROM Polizas WHERE rfc_cliente = '{cliente['rfc']}'", engine)
                     if not df_polizas.empty:
+                        df_polizas.columns = ['Aseguradora', 'Poliza', 'Ramo', 'Vehículo', 'Inicio', 'Fin', 'Ejecutivo']
                         st.dataframe(df_polizas, use_container_width=True, hide_index=True)
                         st.markdown("**📥 Descargar Documentos Originales:**")
                         cols_descarga = st.columns(len(df_polizas))
@@ -362,14 +362,14 @@ with pestana2:
                         response = client.models.generate_content(model='gemini-2.5-flash', contents=[archivo_gemini, instruccion_vision])
                         
                         texto_limpio = response.text
-                        marcador_json = "```" + "json"
-                        marcador_fin = "```"
-                        if marcador_json in texto_limpio:
-                            texto_limpio = texto_limpio.split(marcador_json)[1].split(marcador_fin)[0]
-                        elif marcador_fin in texto_limpio:
-                            texto_limpio = texto_limpio.split(marcador_fin)[1].split(marcador_fin)[0]
-                            
-                        datos_json = json.loads(texto_limpio.strip())
+                        # Escáner limpiador para evitar errores si la IA agrega texto basura
+                        inicio = texto_limpio.find('{')
+                        fin = texto_limpio.rfind('}') + 1
+                        if inicio != -1 and fin > 0:
+                            json_puro = texto_limpio[inicio:fin]
+                            datos_json = json.loads(json_puro)
+                        else:
+                            datos_json = None
                     except: datos_json = None
                     if os.path.exists(ruta_temp): 
                         try: os.remove(ruta_temp)
@@ -512,8 +512,10 @@ with pestana5:
         
         with col_r1:
             st.info("📈 **Ventas (Nuevas Pólizas)**")
-            df_ventas = pd.read_sql_query('SELECT c.nombre as "Cliente", p.aseguradora as "Aseguradora", p.numero_poliza as "Poliza", p.inicio_vigencia as "Inicio", p.ejecutivo as "Ejecutivo" FROM Polizas p JOIN Clientes c ON p.rfc_cliente = c.rfc', engine)
+            # Corrección de mayúsculas/minúsculas para base de datos
+            df_ventas = pd.read_sql_query('SELECT c.nombre, p.aseguradora, p.numero_poliza, p.inicio_vigencia, p.ejecutivo FROM Polizas p JOIN Clientes c ON p.rfc_cliente = c.rfc', engine)
             if not df_ventas.empty:
+                df_ventas.columns = ['Cliente', 'Aseguradora', 'Poliza', 'Inicio', 'Ejecutivo']
                 df_ventas['fecha_dt'] = pd.to_datetime(df_ventas['Inicio'], format='%d/%m/%Y', errors='coerce')
                 df_ventas_filtrado = df_ventas.loc[(df_ventas['fecha_dt'].dt.date >= fecha_inicio) & (df_ventas['fecha_dt'].dt.date <= fecha_fin)].drop(columns=['fecha_dt'])
                 if filtro_ejecutivo != "Todos los Ejecutivos": df_ventas_filtrado = df_ventas_filtrado[df_ventas_filtrado['Ejecutivo'] == filtro_ejecutivo]
@@ -525,8 +527,10 @@ with pestana5:
             
         with col_r2:
             st.info("💰 **Historial de Cobranza**")
-            df_cob = pd.read_sql_query('SELECT c.nombre as "Cliente", p.aseguradora as "Aseguradora", r.monto as "Monto", r.fecha_limite as "Limite", r.estado as "Estatus", p.ejecutivo as "Ejecutivo" FROM Recibos r JOIN Polizas p ON r.numero_poliza = p.numero_poliza JOIN Clientes c ON p.rfc_cliente = c.rfc', engine)
+            # Corrección de mayúsculas/minúsculas para base de datos
+            df_cob = pd.read_sql_query('SELECT c.nombre, p.aseguradora, r.monto, r.fecha_limite, r.estado, p.ejecutivo FROM Recibos r JOIN Polizas p ON r.numero_poliza = p.numero_poliza JOIN Clientes c ON p.rfc_cliente = c.rfc', engine)
             if not df_cob.empty:
+                df_cob.columns = ['Cliente', 'Aseguradora', 'Monto', 'Limite', 'Estatus', 'Ejecutivo']
                 df_cob['fecha_dt'] = pd.to_datetime(df_cob['Limite'], format='%d/%m/%Y', errors='coerce')
                 df_cob_filtrado = df_cob.loc[(df_cob['fecha_dt'].dt.date >= fecha_inicio) & (df_cob['fecha_dt'].dt.date <= fecha_fin)].drop(columns=['fecha_dt'])
                 if filtro_ejecutivo != "Todos los Ejecutivos": df_cob_filtrado = df_cob_filtrado[df_cob_filtrado['Ejecutivo'] == filtro_ejecutivo]
@@ -539,8 +543,10 @@ with pestana5:
             
         with col_r3:
             st.info("🎯 **Efectividad Prospectos**")
-            df_prosp = pd.read_sql_query('SELECT nombre as "Prospecto", producto as "Producto", fecha_cotizacion as "Fecha", ejecutivo as "Ejecutivo" FROM Prospectos', engine)
+            # Corrección de mayúsculas/minúsculas para base de datos
+            df_prosp = pd.read_sql_query('SELECT nombre, producto, fecha_cotizacion, ejecutivo FROM Prospectos', engine)
             if not df_prosp.empty:
+                df_prosp.columns = ['Prospecto', 'Producto', 'Fecha', 'Ejecutivo']
                 df_prosp['fecha_dt'] = pd.to_datetime(df_prosp['Fecha'], format='%Y-%m-%d', errors='coerce')
                 df_prosp_filtrado = df_prosp.loc[(df_prosp['fecha_dt'].dt.date >= fecha_inicio) & (df_prosp['fecha_dt'].dt.date <= fecha_fin)].drop(columns=['fecha_dt'])
                 if filtro_ejecutivo != "Todos los Ejecutivos": df_prosp_filtrado = df_prosp_filtrado[df_prosp_filtrado['Ejecutivo'] == filtro_ejecutivo]

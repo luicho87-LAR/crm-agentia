@@ -161,7 +161,7 @@ def guardar_poliza_bd(datos, pdf_bytes=None, ejecutivo="Titular (Agencia)"):
                 
                 # Inteligencia de detección de Tarjetas para evitar cobranza manual
                 tarjetas_clave = ['visa', 'master', 'amex', 'tarjeta', 'credito', 'debito', 'cargo']
-                if any(palabra in forma_pago for palabra en tarjetas_clave):
+                if any(palabra in forma_pago for palabra in tarjetas_clave):
                     estado_recibo = 'Cargo Automático'
                 else:
                     estado_recibo = 'Pendiente'
@@ -625,3 +625,4 @@ with col_centro:
         st.image("logo_creador.png", use_container_width=True)
     else:
         st.markdown("<h4 style='text-align: center; color: #555555;'>URCO Lab</h4>", unsafe_allow_html=True)
+

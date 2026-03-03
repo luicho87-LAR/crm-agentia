@@ -393,9 +393,10 @@ with pestana2:
                         texto_limpio = texto_limpio.replace("```json", "").replace("```", "")
 
                         datos_json = json.loads(texto_limpio)
-                 except Exception as e:
-    print("Error guardando en BD:", e)
-    return False
+                    except: datos_json = None
+                    if os.path.exists(ruta_temp): 
+                        try: os.remove(ruta_temp)
+                        except: pass
                 
                 if datos_json:
                     resultado = guardar_poliza_bd(datos_json, pdf_bytes=pdf_bytes, ejecutivo=ejecutivo_seleccionado)

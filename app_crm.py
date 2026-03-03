@@ -276,7 +276,8 @@ with pestana1:
                             
                             with cols_descarga[idx % len(cols_descarga)]: 
                                 if pdf_data:
-                                    st.download_button(label=f"📄 {poliza['numero_poliza']}", data=pdf_data, file_name=f"Doc_{poliza['numero_poliza'].replace('/','_')}.pdf", mime="application/pdf", key=f"dl_{poliza['numero_poliza']}_{idx}")
+                                    # MAGIA APLICADA AQUÍ: bytes(pdf_data)
+                                    st.download_button(label=f"📄 {poliza['numero_poliza']}", data=bytes(pdf_data), file_name=f"Doc_{poliza['numero_poliza'].replace('/','_')}.pdf", mime="application/pdf", key=f"dl_{poliza['numero_poliza']}_{idx}")
                                 else: st.caption(f"🚫 Sin PDF en bóveda")
                         
                         st.markdown("---")
@@ -589,4 +590,5 @@ with pestana7:
             except Exception as e:
 
                 st.error(f"Error al generar el respaldo: {e}")
+
 

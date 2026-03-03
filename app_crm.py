@@ -16,7 +16,7 @@ import zipfile
 st.set_page_config(page_title="Agentia CRM", layout="wide", page_icon="icono_agentia.png")
 
 # 🚨 ¡PEGA TU LLAVE AQUÍ ADENTRO DE LAS COMILLAS! 🚨
-API_KEY = st.secrets["GEMINI_API_KEY"] 
+PI_KEY = st.secrets["GEMINI_API_KEY"]
 client = genai.Client(api_key=API_KEY)
 
 # --- ✨ INYECCIÓN DE DISEÑO PREMIUM (UI/UX) ✨ ---
@@ -116,58 +116,38 @@ def extraer_texto_pdf(archivo_pdf):
     except: return None
 
 def analizar_con_ia(texto_sucio):
-    instruccion = """
-    Eres un experto en seguros en México.
-    
-    1. Identifica "tipo_documento" ("Poliza" o "Recibo").
-    2. Extrae:
-       aseguradora,
-       numero_poliza,
-       nombre_cliente,
-       rfc_cliente,
-       telefono,
-       correo,
-       inicio_vigencia,
-       fin_vigencia,
-       direccion_completa.
-    3. Identifica "tipo_producto" (Autos, Gastos Médicos Mayores, Vida, Daños Empresariales, Hogar u Otro).
-    4. Extrae en "vehiculo" (Marca, Modelo y Año si es auto, si no "N/A").
-    5. Extrae cobranza:
-       fecha_limite_pago,
-       monto_a_pagar,
-       forma_pago.
-    6. Calcula "fecha_nacimiento" desde el RFC en formato DD/MM/AAAA.
-
-    Devuelve SOLO JSON válido. No agregues texto adicional.
-    """
-
+    instruccion = """Eres un experto en seguros. 1. Identifica "tipo_documento" ("Poliza" o "Recibo"). 2. Extrae: aseguradora, numero_poliza, nombre_cliente, rfc_cliente, telefono, correo, inicio_vigencia, fin_vigencia, direccion_completa. 3. Identifica "tipo_producto" (Autos, Gastos Médicos Mayores, Vida, Daños Empresariales, Hogar, u Otro). 4. Extrae en "vehiculo" (Marca, Modelo y Año si es auto, si no "N/A"). 5. Extrae cobranza: fecha_limite_pago, monto_a_pagar, y "forma_pago" (ej. Efectivo, Transferencia, Visa, Mastercard, Tarjeta de Credito, Amex, etc.). 6. Calcula "fecha_nacimiento" (DD/MM/AAAA) desde el RFC. Devuelve SOLO JSON válido sin markdown."""
     try:
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=f"{instruccion}\n\nDocumento:\n{texto_sucio}"
-        )
-
-        texto_limpio = response.text.strip()
-        texto_limpio = texto_limpio.replace("```json", "").replace("```", "")
-
-        datos = json.loads(texto_limpio)
-
-        # Validación mínima
-        if "numero_poliza" not in datos:
-            return None
-
-        return datos
-
-    except Exception as e:
-        print("Error IA:", e)
+        prompt_completo = f"{instruccion}\n\n--- DOCUMENTO ---\n{texto_sucio}"
+        response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt_completo)
+        
+        texto_limpio = response.text
+        # Limpieza segura para evitar errores de parseo markdown
+        marcador_json = "```" + "json"
+        marcador_fin = "```"
+        if marcador_json in texto_limpio:
+            texto_limpio = texto_limpio.split(marcador_json)[1].split(marcador_fin)[0]
+        elif marcador_fin in texto_limpio:
+            texto_limpio = texto_limpio.split(marcador_fin)[1].split(marcador_fin)[0]
+            
+        return json.loads(texto_limpio.strip())
+    except Exception as e: 
         return None
 
 def guardar_poliza_bd(datos, pdf_bytes=None, ejecutivo="Titular (Agencia)"):
     with engine.begin() as conn:
         try:
             tipo_doc = datos.get('tipo_documento', 'Poliza')
-            rfc = datos.get('rfc_cliente', 'No especificado').strip()
-            if not rfc or rfc == 'No especificado': rfc = f"SIN_RFC_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            
+            # Salvavidas para RFC
+            rfc = str(datos.get('rfc_cliente', '')).strip()
+            if not rfc or rfc.lower() in ['no especificado', 'none', 'null']: 
+                rfc = f"SIN_RFC_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                
+            # Salvavidas para Póliza
+            num_pol = str(datos.get('numero_poliza', '')).strip()
+            if not num_pol or num_pol.lower() in ['no especificado', 'none', 'null', '']:
+                num_pol = f"POR_ASIGNAR_{datetime.now().strftime('%H%M%S')}"
             
             conn.execute(text("""
                 INSERT INTO Clientes (rfc, nombre, telefono, correo, fecha_nacimiento, direccion) 
@@ -176,7 +156,6 @@ def guardar_poliza_bd(datos, pdf_bytes=None, ejecutivo="Titular (Agencia)"):
                 nombre=EXCLUDED.nombre, telefono=EXCLUDED.telefono, correo=EXCLUDED.correo, direccion=EXCLUDED.direccion
             """), {"rfc": rfc, "nom": datos.get('nombre_cliente'), "tel": datos.get('telefono'), "cor": datos.get('correo'), "fec": datos.get('fecha_nacimiento', 'No especificado'), "dir": datos.get('direccion_completa', 'No especificada')})
             
-            num_pol = datos.get('numero_poliza')
             prod = datos.get('tipo_producto', 'No especificado')
             veh = datos.get('vehiculo', 'N/A')
             
@@ -195,11 +174,11 @@ def guardar_poliza_bd(datos, pdf_bytes=None, ejecutivo="Titular (Agencia)"):
                 """), {"pol": num_pol, "rfc": rfc, "aseg": datos.get('aseguradora'), "ini": datos.get('inicio_vigencia'), "fin": datos.get('fin_vigencia'), "pdf": pdf_bytes, "ejec": ejecutivo, "prod": prod, "veh": veh})
             
             fecha_pago = datos.get('fecha_limite_pago')
-            if fecha_pago and fecha_pago.lower() not in ['no especificado', 'none', '']:
+            if fecha_pago and str(fecha_pago).lower() not in ['no especificado', 'none', '']:
                 monto = formato_pesos(datos.get('monto_a_pagar', 'No especificado'))
                 forma_pago = str(datos.get('forma_pago', '')).lower()
                 
-                # Inteligencia de detección de Tarjetas para evitar cobranza manual
+                # Inteligencia de Tarjetas (CORREGIDO LA SINTAXIS "in")
                 tarjetas_clave = ['visa', 'master', 'amex', 'tarjeta', 'credito', 'debito', 'cargo']
                 if any(palabra in forma_pago for palabra in tarjetas_clave):
                     estado_recibo = 'Cargo Automático'
@@ -225,7 +204,7 @@ def generar_pdf_con_logos(df, titulo, fecha_inicio, fecha_fin):
     pdf.ln(10)
     if not df.empty:
         pdf.set_font("Arial", "B", 9)
-        ancho_col = 277 / len(df.columns)
+        ancho_col = 277 / max(1, len(df.columns))
         for col in df.columns: pdf.cell(ancho_col, 8, str(col).encode('latin-1', 'replace').decode('latin-1')[:20], border=1, align='C')
         pdf.ln()
         pdf.set_font("Arial", "", 8)
@@ -347,7 +326,6 @@ with pestana1:
                                         with engine.begin() as conn:
                                             conn.execute(text("UPDATE Polizas SET tipo_producto=:prod, vehiculo=:veh WHERE numero_poliza=:pol"), {"prod": nuevo_prod, "veh": nuevo_veh, "pol": poliza_clasificar})
                                         st.success("Etiquetas actualizadas"); st.rerun()
-                                        
                     else: st.warning("Este cliente no tiene pólizas registradas.")
         else: st.info("No se encontró ningún cliente con esos datos.")
 
@@ -380,19 +358,18 @@ with pestana2:
                     with open(ruta_temp, "wb") as f: f.write(pdf_bytes)
                     try:
                         archivo_gemini = client.files.upload(file=ruta_temp)
-
-                        response = client.models.generate_content(
-                        model="gemini-2.5-flash",
-                        contents=[
-                        archivo_gemini,
-                        instruccion_vision
-                 ]
-)
-
-                        texto_limpio = response.text.strip()
-                        texto_limpio = texto_limpio.replace("```json", "").replace("```", "")
-
-                        datos_json = json.loads(texto_limpio)
+                        instruccion_vision = """Eres experto en seguros. 1. Identifica "tipo_documento" ("Poliza" o "Recibo"). 2. Extrae: aseguradora, numero_poliza, nombre_cliente, rfc_cliente, telefono, correo, inicio_vigencia, fin_vigencia, direccion_completa. 3. Identifica "tipo_producto" (Autos, Gastos Médicos, Vida, Daños, Hogar, Otro). 4. Extrae "vehiculo" (Marca, Modelo y Año). 5. Extrae cobranza: fecha_limite_pago, monto_a_pagar, y "forma_pago" (Visa, Mastercard, Credito, Debito, etc.). Calcula fecha_nacimiento (DD/MM/AAAA). Devuelve SOLO JSON válido."""
+                        response = client.models.generate_content(model='gemini-2.5-flash', contents=[archivo_gemini, instruccion_vision])
+                        
+                        texto_limpio = response.text
+                        marcador_json = "```" + "json"
+                        marcador_fin = "```"
+                        if marcador_json in texto_limpio:
+                            texto_limpio = texto_limpio.split(marcador_json)[1].split(marcador_fin)[0]
+                        elif marcador_fin in texto_limpio:
+                            texto_limpio = texto_limpio.split(marcador_fin)[1].split(marcador_fin)[0]
+                            
+                        datos_json = json.loads(texto_limpio.strip())
                     except: datos_json = None
                     if os.path.exists(ruta_temp): 
                         try: os.remove(ruta_temp)
@@ -408,7 +385,7 @@ with pestana2:
         if errores == 0:
             st.success(f"✅ ¡Se procesaron y automatizaron {exitos} documentos con éxito!")
             st.balloons()
-        else: st.warning(f"⚠️ {exitos} guardados exitosamente. Hubo {errores} archivos ilegibles.")
+        else: st.warning(f"⚠️ {exitos} guardados exitosamente. Hubo {errores} archivos ilegibles por falta de datos clave.")
 
 # ==========================================
 # PESTAÑA 3: PROSPECTOS MANUALES
@@ -670,7 +647,7 @@ col_izq, col_centro, col_der = st.columns([4, 2, 4])
 with col_centro:
     st.markdown("<p style='text-align: center; color: #888888; font-size: 13px; margin-bottom: 5px;'>Powered by:</p>", unsafe_allow_html=True)
     
-    # 🚨 Cambia "logo_creador.png" por el nombre real de tu archivo de logo en GitHub si lo tienes
+    # Cambia "logo_creador.png" por el nombre real de tu logo en GitHub
     if os.path.exists("logo_creador.png"):
         st.image("logo_creador.png", use_container_width=True)
     else:

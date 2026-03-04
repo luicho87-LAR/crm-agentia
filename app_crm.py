@@ -364,10 +364,55 @@ with col_der:
 st.markdown("---")
 lista_dinamica_ejecutivos = obtener_lista_ejecutivos()
 
-pestana1, pestana2, pestana3, pestana4, pestana5 = st.tabs([
-    "🔍 Buscador Inteligente", "📄 Lector IA Masivo", "🚦 Seguimiento Prospectos", 
-    "🔔 Alertas y Cobranza", "📊 Reportes VIP"
+pestana0, pestana1, pestana2, pestana3, pestana4, pestana5 = st.tabs([
+    "📊 Dashboard VIP", "🔍 Buscador Inteligente", "📄 Lector IA Masivo", "🚦 Seguimiento Prospectos", 
+    "🔔 Alertas y Cobranza", "📈 Reportes"
 ])
+
+# ==========================================
+# PESTAÑA 0: DASHBOARD DIRECTOR (NUEVA)
+# ==========================================
+with pestana0:
+    st.markdown("### 📊 Tablero de Control Ejecutivo")
+    
+    # 1. Métricas Principales
+    t_clientes = pd.read_sql_query("SELECT COUNT(*) FROM Clientes", engine).iloc[0,0]
+    t_polizas = pd.read_sql_query("SELECT COUNT(*) FROM Polizas", engine).iloc[0,0]
+    
+    df_recibos_pendientes = pd.read_sql_query("SELECT monto FROM Recibos WHERE estado = 'Pendiente'", engine)
+    suma_pendientes = 0
+    for m in df_recibos_pendientes['monto']:
+        try:
+            val = str(m).replace('$', '').replace(',', '').strip()
+            suma_pendientes += float(val) if val else 0
+        except: pass
+        
+    c1, c2, c3 = st.columns(3)
+    c1.metric("👥 Clientes Totales", t_clientes)
+    c2.metric("📑 Pólizas Activas", t_polizas)
+    c3.metric("💰 Cobranza Pendiente en Calle", f"${suma_pendientes:,.2f}")
+    
+    st.markdown("---")
+    
+    # 2. Gráficos Interactivos
+    col_g1, col_g2 = st.columns(2)
+    with col_g1:
+        st.markdown("##### 🚗 Distribución por Ramo")
+        df_ramos = pd.read_sql_query("SELECT tipo_producto, COUNT(*) as Total FROM Polizas GROUP BY tipo_producto", engine)
+        if not df_ramos.empty:
+            df_ramos = df_ramos.set_index('tipo_producto')
+            st.bar_chart(df_ramos, color="#0b7af0")
+        else:
+            st.info("Sube pólizas para ver esta gráfica.")
+            
+    with col_g2:
+        st.markdown("##### 🏢 Volumen por Aseguradora")
+        df_aseg = pd.read_sql_query("SELECT aseguradora, COUNT(*) as Total FROM Polizas GROUP BY aseguradora", engine)
+        if not df_aseg.empty:
+            df_aseg = df_aseg.set_index('aseguradora')
+            st.bar_chart(df_aseg, color="#2ecc71")
+        else:
+            st.info("Sube pólizas para ver esta gráfica.")
 
 # ==========================================
 # PESTAÑA 1: BUSCADOR VIP 
@@ -566,6 +611,7 @@ with pestana3:
 # ==========================================
 with pestana4:
     st.markdown("### 🔄 Próximas Renovaciones (Alerta 30 días)")
+        
     df_alertas = pd.read_sql_query("SELECT c.nombre, c.telefono, p.aseguradora, p.numero_poliza, p.fin_vigencia, p.ejecutivo FROM Polizas p JOIN Clientes c ON p.rfc_cliente = c.rfc", engine)
     if not df_alertas.empty:
         df_alertas['fin_vigencia_dt'] = pd.to_datetime(df_alertas['fin_vigencia'], format='%d/%m/%Y', errors='coerce')
@@ -578,6 +624,7 @@ with pestana4:
     
     st.markdown("---")
     st.markdown("### 💰 Control de Cobranza (Recibos Fraccionados)")
+        
     df_cobranza = pd.read_sql_query("SELECT r.id, c.nombre, c.telefono, p.aseguradora, r.numero_poliza, r.monto, r.fecha_limite, p.ejecutivo FROM Recibos r JOIN Polizas p ON r.numero_poliza = p.numero_poliza JOIN Clientes c ON p.rfc_cliente = c.rfc WHERE r.estado = 'Pendiente'", engine)
     if not df_cobranza.empty:
         df_cobranza['fecha_dt'] = pd.to_datetime(df_cobranza['fecha_limite'], format='%d/%m/%Y', errors='coerce')
@@ -612,6 +659,7 @@ with pestana4:
         
     st.markdown("---")
     st.markdown("### 🎂 Cumpleañeros del Mes")
+        
     df_cumples = pd.read_sql_query("SELECT nombre, telefono, fecha_nacimiento FROM Clientes WHERE fecha_nacimiento IS NOT NULL AND fecha_nacimiento != 'No especificado' AND fecha_nacimiento != 'No calculado'", engine)
     if not df_cumples.empty:
         df_cumples['fecha_dt'] = pd.to_datetime(df_cumples['fecha_nacimiento'], format='%d/%m/%Y', errors='coerce')
@@ -627,6 +675,7 @@ with pestana4:
                     tel = str(fila['telefono']).replace(' ','').replace('-','')
                     msj = f"¡Hola {fila['nombre']}! 🎉 De parte de todo nuestro equipo, te deseamos un muy Feliz Cumpleaños. Que pases un excelente día lleno de alegría."
                     mensajes_cumple.append(f"https://wa.me/52{tel}?text={urllib.parse.quote(msj)}")
+                
                 cumpleañeros['Felicitar'] = mensajes_cumple
                 st.dataframe(cumpleañeros[['nombre', 'fecha_nacimiento', 'telefono', 'Felicitar']], column_config={"Felicitar": st.column_config.LinkColumn("🎁 Enviar Felicitación")}, hide_index=True, use_container_width=True)
             else: st.success("No hay clientes que cumplan años en este mes.")

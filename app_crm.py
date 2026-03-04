@@ -12,6 +12,7 @@ from sqlalchemy import create_engine, text
 import io
 import zipfile
 import time
+import re
 
 # --- 1. CONFIGURACIÓN DE INTELIGENCIA ARTIFICIAL Y PÁGINA ---
 st.set_page_config(page_title="Agentia CRM", layout="wide", page_icon="icono_agentia.png")
@@ -164,18 +165,21 @@ PLANTILLA_IA = """
 def analizar_con_ia(texto_sucio):
     instruccion = f"""Eres un robot experto en seguros. Tu ÚNICA tarea es extraer información y devolverla ESTRICTAMENTE en este formato JSON, sin saludos, sin explicaciones, sin texto extra:\n{PLANTILLA_IA}\nSi un campo no aparece, pon "No especificado". Las fechas deben ser DD/MM/AAAA. Calcula fecha_nacimiento con el RFC si es posible."""
     
-    # SISTEMA ANTI-BLOQUEO MEJORADO (5 Reintentos escalonados)
+    # SISTEMA ANTI-BLOQUEO INTELIGENTE: Detecta los segundos que pide Google
     for intento in range(5):
         try:
             prompt_completo = f"{instruccion}\n\n--- DOCUMENTO ---\n{texto_sucio}"
             response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt_completo)
             return response.text
         except Exception as e: 
-            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+            error_str = str(e)
+            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
                 if intento < 4:  
-                    time.sleep(20) # Pausas de 20s para ir limpiando el límite de Google
+                    match = re.search(r"retry in (\d+\.?\d*)s", error_str)
+                    wait_time = float(match.group(1)) + 2 if match else 30
+                    time.sleep(wait_time)
                     continue
-            return f"ERROR_API: {str(e)}"
+            return f"ERROR_API: {error_str}"
     return "ERROR_API: Excedido el límite de velocidad tras 5 reintentos."
 
 def guardar_poliza_bd(datos, pdf_bytes=None, ejecutivo="Titular (Agencia)"):
@@ -454,8 +458,7 @@ with pestana2:
     ejecutivo_seleccionado = st.selectbox("Asignar producción a:", lista_dinamica_ejecutivos)
     st.write("2️⃣ **Arrastra los PDFs (Pólizas y Recibos):**")
     
-    # Notificación sutil para el usuario sobre la pausa
-    st.caption("⚡ Para mantener el servicio gratuito de Google, el sistema hará pausas automáticas entre archivos para no saturar.")
+    st.caption("⚡ Para mantener el servicio 100% gratuito de Google, el sistema leerá los tiempos de espera oficiales y pausará automáticamente cuando sea necesario.")
     
     archivos_subidos = st.file_uploader("Arrastra tus archivos aquí...", type=["pdf"], accept_multiple_files=True)
     
@@ -472,11 +475,9 @@ with pestana2:
                 pdf_bytes = archivo.getvalue()
                 error_api = ""
                 
-                # Intentamos procesarlo con la IA (Texto Plano)
                 if texto_crudo and len(texto_crudo.strip()) > 20: 
                     respuesta_texto = analizar_con_ia(texto_crudo)
                 else:
-                    # Intentamos con Visión Artificial si el PDF es una imagen escaneada
                     ruta_temp = f"temp_{i}.pdf"
                     with open(ruta_temp, "wb") as f: f.write(pdf_bytes)
                     try:
@@ -488,11 +489,14 @@ with pestana2:
                                 respuesta_texto = response.text
                                 break
                             except Exception as ev:
-                                if ("429" in str(ev) or "RESOURCE_EXHAUSTED" in str(ev)) and intento_vision < 4:
-                                    st.toast(f"⏳ Google ocupado. Reintentando en 20s... (Intento {intento_vision+1}/5)")
-                                    time.sleep(20)
+                                error_str_v = str(ev)
+                                if ("429" in error_str_v or "RESOURCE_EXHAUSTED" in error_str_v) and intento_vision < 4:
+                                    match = re.search(r"retry in (\d+\.?\d*)s", error_str_v)
+                                    wait_time = float(match.group(1)) + 2 if match else 30
+                                    st.toast(f"⏳ Google pide pausa. Esperando {int(wait_time)}s... (Intento {intento_vision+1}/5)")
+                                    time.sleep(wait_time)
                                     continue
-                                respuesta_texto = f"ERROR_API: {str(ev)}"
+                                respuesta_texto = f"ERROR_API: {error_str_v}"
                                 break
                     except Exception as e:
                         respuesta_texto = f"ERROR_API: {str(e)}"
@@ -501,14 +505,12 @@ with pestana2:
                             try: os.remove(ruta_temp)
                             except: pass
                 
-                # Validamos el resultado
                 if respuesta_texto and not respuesta_texto.startswith("ERROR_API"):
                     datos_json = limpiar_json(respuesta_texto)
                     if not datos_json: error_api = f"La IA no devolvió JSON válido."
                 else:
                     error_api = respuesta_texto
                 
-                # Guardamos en Base de Datos
                 if datos_json:
                     resultado = guardar_poliza_bd(datos_json, pdf_bytes=pdf_bytes, ejecutivo=ejecutivo_seleccionado)
                     if isinstance(resultado, str) and not resultado.startswith("Error"): 
@@ -522,10 +524,9 @@ with pestana2:
             
             barra_progreso.progress((i + 1) / total_archivos)
             
-            # PAUSA LIGERA ENTRE ARCHIVOS PARA NO SATURAR EL LÍMITE GRATUITO
+            # Pausa ligera de seguridad entre un PDF y otro
             if i < total_archivos - 1:
-                st.toast("Pausando 10 segundos para no saturar a Google...")
-                time.sleep(10)
+                time.sleep(5)
                 
         if errores == 0:
             st.success(f"✅ ¡Se procesaron {exitos} documentos con éxito!")
@@ -658,7 +659,6 @@ with pestana5:
         
         with col_r1:
             st.info("📈 **Ventas (Nuevas Pólizas)**")
-            # CANDADO ABSOLUTO (Evita el KeyError: 'Inicio')
             df_ventas = pd.read_sql_query('SELECT c.nombre AS cliente, p.aseguradora AS aseguradora, p.numero_poliza AS poliza, p.inicio_vigencia AS inicio, p.ejecutivo AS ejecutivo FROM Polizas p JOIN Clientes c ON p.rfc_cliente = c.rfc', engine)
             if not df_ventas.empty:
                 df_ventas.columns = ['cliente', 'aseguradora', 'poliza', 'inicio', 'ejecutivo']

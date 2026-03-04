@@ -394,49 +394,92 @@ with pestana0:
     
     st.markdown("---")
     
-    # Función para limpiar nombres duplicados (Ej. "General de Seguros S.A." -> "GENERAL DE SEGUROS")
-    def normalizar_texto(texto):
-        if pd.isna(texto) or str(texto).lower() in ['nan', 'none', '']: return "NO ESPECIFICADO"
+    # --- MOTORES DE AGRUPACIÓN INTELIGENTE ---
+    def normalizar_ramo(texto):
+        if pd.isna(texto): return "Otro"
+        t = str(texto).upper()
+        if "AUTO" in t: return "Autos"
+        if "MEDIC" in t or "MÉDIC" in t or "GMM" in t or "SALUD" in t: return "Gastos Médicos"
+        if "VIDA" in t: return "Vida"
+        if "HOGAR" in t or "RESIDENC" in t or "CASA" in t: return "Hogar"
+        if "DAÑO" in t or "EMPRESA" in t: return "Daños Empresariales"
+        return "Otro"
+
+    def normalizar_aseguradora(texto):
+        if pd.isna(texto) or str(texto).lower() in ['nan', 'none', '']: return "No especificada"
         t = str(texto).upper().strip()
-        t = re.sub(r'[,.\s]*(S\.A\. DE C\.V\.|S\.A\.|S\.A\.B\. DE C\.V\.|SAB DE CV|SAPI DE CV|S\.A\. DE C\.V)$', '', t)
-        return t.strip()
+        
+        # Quitar puntos y comas
+        t = t.replace('.', '').replace(',', '')
+        # Quitar terminaciones legales
+        t = re.sub(r'\b(S A DE C V|S A B DE C V|S A P I DE C V|S A|SAB|SAPI|DE C V|C V)\b', '', t)
+        t = re.sub(r'\s+', ' ', t).strip()
+        
+        # Homologar marcas comerciales
+        if "AXA" in t: return "AXA"
+        if "GNP" in t or "NACIONAL PROVINCIAL" in t: return "GNP"
+        if "QUALITAS" in t or "QUÁLITAS" in t: return "Quálitas"
+        if "MAPFRE" in t: return "Mapfre"
+        if "ZURICH" in t: return "Zurich"
+        if "HDI" in t: return "HDI"
+        if "CHUBB" in t: return "Chubb"
+        if "ABA" in t: return "ABA"
+        if "INBURSA" in t: return "Inbursa"
+        if "BANORTE" in t: return "Banorte"
+        if "ATLAS" in t: return "Atlas"
+        if "AFIRME" in t: return "Afirme"
+        if "GENERAL" in t: return "General de Seguros"
+        if "ANA" in t: return "ANA Seguros"
+        if "BUPA" in t: return "BUPA"
+        if "ALLIANZ" in t: return "Allianz"
+        
+        return t.title() # Si es una nueva, la capitaliza bonito
+
+    def limpiar_dinero(val):
+        try:
+            if val is None or str(val).lower() in ['nan', 'none', 'no especificado', '']: return 0.0
+            v = str(val).replace('$', '').replace(',', '').replace(' ', '').strip()
+            return float(v)
+        except:
+            return 0.0
 
     # 2. Gráficos Interactivos
     col_g1, col_g2 = st.columns(2)
     with col_g1:
-        st.markdown("##### 🚗 Distribución por Ramo")
+        st.markdown("##### 🚗 Pólizas por Ramo")
         df_ramos = pd.read_sql_query("SELECT tipo_producto FROM Polizas", engine)
         if not df_ramos.empty:
-            df_ramos['tipo_producto'] = df_ramos['tipo_producto'].apply(normalizar_texto)
-            df_ramos_agrupado = df_ramos.groupby('tipo_producto').size().reset_index(name='Total').set_index('tipo_producto')
+            df_ramos['Ramo'] = df_ramos['tipo_producto'].apply(normalizar_ramo)
+            df_ramos_agrupado = df_ramos.groupby('Ramo').size().reset_index(name='Total').set_index('Ramo')
             st.bar_chart(df_ramos_agrupado, color="#0b7af0")
         else:
             st.info("Sube pólizas para ver esta gráfica.")
             
     with col_g2:
-        st.markdown("##### 🏢 Prima Total por Aseguradora")
-        # Unimos las pólizas con sus recibos para sumar el dinero
+        st.markdown("##### 🏢 Prima Registrada por Aseguradora")
+        # Unimos pólizas con recibos para sumar el dinero
         query_primas = """
-        SELECT p.aseguradora, r.monto 
+        SELECT p.aseguradora, r.monto, r.estado 
         FROM Polizas p 
-        LEFT JOIN Recibos r ON p.numero_poliza = r.numero_poliza
+        JOIN Recibos r ON p.numero_poliza = r.numero_poliza
         """
         df_primas = pd.read_sql_query(query_primas, engine)
         if not df_primas.empty:
-            df_primas['aseguradora'] = df_primas['aseguradora'].apply(normalizar_texto)
+            df_primas['Aseguradora'] = df_primas['aseguradora'].apply(normalizar_aseguradora)
+            df_primas['Prima'] = df_primas['monto'].apply(limpiar_dinero)
             
-            # Limpiamos el texto de dinero para poder sumarlo ($1,500.00 -> 1500.00)
-            def limpiar_dinero(val):
-                try: return float(str(val).replace('$', '').replace(',', '').strip())
-                except: return 0.0
+            # Agrupamos sumando todo el dinero de los recibos
+            df_primas_agrupado = df_primas.groupby('Aseguradora')['Prima'].sum().reset_index().set_index('Aseguradora')
             
-            df_primas['monto_limpio'] = df_primas['monto'].apply(limpiar_dinero)
-            df_primas_agrupado = df_primas.groupby('aseguradora')['monto_limpio'].sum().reset_index()
-            df_primas_agrupado = df_primas_agrupado.rename(columns={'monto_limpio': 'Prima Total Registrada'}).set_index('aseguradora')
+            # Filtramos para no mostrar compañías con $0
+            df_primas_agrupado = df_primas_agrupado[df_primas_agrupado['Prima'] > 0]
             
-            st.bar_chart(df_primas_agrupado, color="#2ecc71")
+            if not df_primas_agrupado.empty:
+                st.bar_chart(df_primas_agrupado, color="#2ecc71")
+            else:
+                st.info("Ninguna póliza registrada tiene montos válidos aún.")
         else:
-            st.info("Sube pólizas con recibos para ver esta gráfica.")
+            st.info("Sube pólizas que contengan recibos para graficar la prima.")
 
 # ==========================================
 # PESTAÑA 1: BUSCADOR VIP 

@@ -78,7 +78,7 @@ if not st.session_state['autenticado']:
             contrasena = st.text_input("Contraseña", type="password", placeholder="••••••••")
             boton_entrar = st.form_submit_button("Iniciar Sesión ➜", type="primary", use_container_width=True)
             if boton_entrar:
-                if usuario == "admin" and contrasena == "Agentia2026":
+                if usuario == "Gabriela" and contrasena == "Agentia2026":
                     st.session_state['autenticado'] = True
                     st.session_state['usuario_actual'] = usuario
                     st.rerun()
@@ -310,7 +310,7 @@ with col_head2:
 
 col_tit, col_vacia, col_der = st.columns([5, 1, 2])
 with col_tit:
-    st.markdown("<h1 style='color: #0b7af0; margin-bottom: 0px;'>Sistema de Gestión Integral</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='color: #000000; margin-bottom: 0px;'>Sistema de Gestión Integral</h1>", unsafe_allow_html=True)
 
 with col_der:
     if os.path.exists("logo_crm.png"):
@@ -360,10 +360,17 @@ with col_der:
                                 
                                 conn.execute(text("INSERT INTO Clientes (rfc, nombre, telefono, correo, fecha_nacimiento, direccion) VALUES (:rfc, :nom, :tel, :cor, 'No calculado', :dir) ON CONFLICT (rfc) DO UPDATE SET nombre=EXCLUDED.nombre, telefono=EXCLUDED.telefono, correo=EXCLUDED.correo, direccion=EXCLUDED.direccion"), {"rfc": rfc, "nom": nombre, "tel": tel, "cor": correo, "dir": direc})
                                 if pol and pol != 'nan':
-                                    conn.execute(text("INSERT INTO Polizas (numero_poliza, rfc_cliente, aseguradora, inicio_vigencia, fin_vigencia, ejecutivo, tipo_producto, vehiculo) VALUES (:pol, :rfc, :aseg, :ini, :fin, :ejec, 'No especificado', 'N/A') ON CONFLICT (numero_poliza) DO UPDATE SET inicio_vigencia=EXCLUDED.inicio_vigencia, fin_vigencia=EXCLUDED.fin_vigencia, ejecutivo=EXCLUDED.ejecutivo"), {"pol": pol, "rfc": rfc, "aseg": aseg, "ini": ini, "fin": fin, "ejec": ejecutivo_excel})
-                                registros += 1
-                        st.success(f"🎉 ¡Misión cumplida! Se migraron {registros} clientes."); st.balloons()
-                    except Exception as e: st.error(f"Error técnico: {e}")
+                                conn.execute(text("""
+                                    INSERT INTO Polizas (numero_poliza, rfc_cliente, aseguradora, inicio_vigencia, fin_vigencia, ejecutivo, tipo_producto, vehiculo) 
+                                    VALUES (:pol, :rfc, :aseg, :ini, :fin, :ejec, 'No especificado', 'N/A')
+                                    ON CONFLICT (numero_poliza) DO UPDATE SET inicio_vigencia=EXCLUDED.inicio_vigencia, fin_vigencia=EXCLUDED.fin_vigencia, ejecutivo=EXCLUDED.ejecutivo
+                                """), {"pol": pol, "rfc": rfc, "aseg": aseg, "ini": ini, "fin": fin, "ejec": ejecutivo_excel})
+                            registros += 1
+                    st.success(f"🎉 ¡Misión cumplida! Se migraron {registros} clientes a tu nube.")
+                    st.balloons()
+                    time.sleep(2.5) # Espera a que terminen los globos
+                    st.rerun() # Fuerza la actualización de todo el sistema
+                except Exception as e: st.error(f"Error técnico en el archivo: {e}")
 
         with st.expander("☁️ Respaldo de Base de Datos", expanded=False):
             st.info("Descarga un archivo ZIP con todos tus registros actuales.")
@@ -645,10 +652,15 @@ with pestana2:
             if i < total_archivos - 1: time.sleep(5)
                 
         if errores == 0:
-            st.success(f"✅ ¡Se procesaron {exitos} documentos con éxito!")
+            st.success(f"✅ ¡Se procesaron {exitos} documentos con éxito! Actualizando tablero...")
             st.balloons()
+            time.sleep(3) # Pausa para ver la celebración
+            st.rerun() # Refresco automático de la pantalla
         else: 
-            st.warning(f"⚠️ {exitos} guardados. Hubo {errores} errores.")
+            st.warning(f"⚠️ {exitos} guardados. Hubo {errores} errores. Revisa los mensajes rojos arriba.")
+            # Si hubo errores, ponemos un botón en lugar de auto-refrescar para que alcances a leer qué falló
+            if st.button("🔄 Refrescar Tablero", type="primary"):
+                st.rerun()
 
 # ==========================================
 # PESTAÑA 3: PROSPECTOS MANUALES

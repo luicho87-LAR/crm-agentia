@@ -394,25 +394,49 @@ with pestana0:
     
     st.markdown("---")
     
+    # Función para limpiar nombres duplicados (Ej. "General de Seguros S.A." -> "GENERAL DE SEGUROS")
+    def normalizar_texto(texto):
+        if pd.isna(texto) or str(texto).lower() in ['nan', 'none', '']: return "NO ESPECIFICADO"
+        t = str(texto).upper().strip()
+        t = re.sub(r'[,.\s]*(S\.A\. DE C\.V\.|S\.A\.|S\.A\.B\. DE C\.V\.|SAB DE CV|SAPI DE CV|S\.A\. DE C\.V)$', '', t)
+        return t.strip()
+
     # 2. Gráficos Interactivos
     col_g1, col_g2 = st.columns(2)
     with col_g1:
         st.markdown("##### 🚗 Distribución por Ramo")
-        df_ramos = pd.read_sql_query("SELECT tipo_producto, COUNT(*) as Total FROM Polizas GROUP BY tipo_producto", engine)
+        df_ramos = pd.read_sql_query("SELECT tipo_producto FROM Polizas", engine)
         if not df_ramos.empty:
-            df_ramos = df_ramos.set_index('tipo_producto')
-            st.bar_chart(df_ramos, color="#0b7af0")
+            df_ramos['tipo_producto'] = df_ramos['tipo_producto'].apply(normalizar_texto)
+            df_ramos_agrupado = df_ramos.groupby('tipo_producto').size().reset_index(name='Total').set_index('tipo_producto')
+            st.bar_chart(df_ramos_agrupado, color="#0b7af0")
         else:
             st.info("Sube pólizas para ver esta gráfica.")
             
     with col_g2:
-        st.markdown("##### 🏢 Volumen por Aseguradora")
-        df_aseg = pd.read_sql_query("SELECT aseguradora, COUNT(*) as Total FROM Polizas GROUP BY aseguradora", engine)
-        if not df_aseg.empty:
-            df_aseg = df_aseg.set_index('aseguradora')
-            st.bar_chart(df_aseg, color="#2ecc71")
+        st.markdown("##### 🏢 Prima Total por Aseguradora")
+        # Unimos las pólizas con sus recibos para sumar el dinero
+        query_primas = """
+        SELECT p.aseguradora, r.monto 
+        FROM Polizas p 
+        LEFT JOIN Recibos r ON p.numero_poliza = r.numero_poliza
+        """
+        df_primas = pd.read_sql_query(query_primas, engine)
+        if not df_primas.empty:
+            df_primas['aseguradora'] = df_primas['aseguradora'].apply(normalizar_texto)
+            
+            # Limpiamos el texto de dinero para poder sumarlo ($1,500.00 -> 1500.00)
+            def limpiar_dinero(val):
+                try: return float(str(val).replace('$', '').replace(',', '').strip())
+                except: return 0.0
+            
+            df_primas['monto_limpio'] = df_primas['monto'].apply(limpiar_dinero)
+            df_primas_agrupado = df_primas.groupby('aseguradora')['monto_limpio'].sum().reset_index()
+            df_primas_agrupado = df_primas_agrupado.rename(columns={'monto_limpio': 'Prima Total Registrada'}).set_index('aseguradora')
+            
+            st.bar_chart(df_primas_agrupado, color="#2ecc71")
         else:
-            st.info("Sube pólizas para ver esta gráfica.")
+            st.info("Sube pólizas con recibos para ver esta gráfica.")
 
 # ==========================================
 # PESTAÑA 1: BUSCADOR VIP 

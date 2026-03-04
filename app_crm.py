@@ -359,18 +359,19 @@ with col_der:
                                 if ejecutivo_excel == 'nan' or not ejecutivo_excel: ejecutivo_excel = 'Titular (Agencia)'
                                 
                                 conn.execute(text("INSERT INTO Clientes (rfc, nombre, telefono, correo, fecha_nacimiento, direccion) VALUES (:rfc, :nom, :tel, :cor, 'No calculado', :dir) ON CONFLICT (rfc) DO UPDATE SET nombre=EXCLUDED.nombre, telefono=EXCLUDED.telefono, correo=EXCLUDED.correo, direccion=EXCLUDED.direccion"), {"rfc": rfc, "nom": nombre, "tel": tel, "cor": correo, "dir": direc})
-                                 if pol and pol != 'nan':
+                                
+                                if pol and pol != 'nan':
                                     conn.execute(text("""
                                         INSERT INTO Polizas (numero_poliza, rfc_cliente, aseguradora, inicio_vigencia, fin_vigencia, ejecutivo, tipo_producto, vehiculo) 
                                         VALUES (:pol, :rfc, :aseg, :ini, :fin, :ejec, 'No especificado', 'N/A')
                                         ON CONFLICT (numero_poliza) DO UPDATE SET inicio_vigencia=EXCLUDED.inicio_vigencia, fin_vigencia=EXCLUDED.fin_vigencia, ejecutivo=EXCLUDED.ejecutivo
                                     """), {"pol": pol, "rfc": rfc, "aseg": aseg, "ini": ini, "fin": fin, "ejec": ejecutivo_excel})
-                            registros += 1
-                    st.success(f"🎉 ¡Misión cumplida! Se migraron {registros} clientes a tu nube.")
-                    st.balloons()
-                    time.sleep(2.5) # Espera a que terminen los globos
-                    st.rerun() # Fuerza la actualización de todo el sistema
-                except Exception as e: st.error(f"Error técnico en el archivo: {e}")
+                                registros += 1
+                        st.success(f"🎉 ¡Misión cumplida! Se migraron {registros} clientes a tu nube.")
+                        st.balloons()
+                        time.sleep(2.5) # Espera a que terminen los globos
+                        st.rerun() # Fuerza la actualización de todo el sistema
+                    except Exception as e: st.error(f"Error técnico en el archivo: {e}")
 
         with st.expander("☁️ Respaldo de Base de Datos", expanded=False):
             st.info("Descarga un archivo ZIP con todos tus registros actuales.")
@@ -848,4 +849,3 @@ with col_centro:
         st.image("logo_creador.png", use_container_width=True)
     else:
         st.markdown("<h4 style='text-align: center; color: #555555;'>URCO Lab</h4>", unsafe_allow_html=True)
-

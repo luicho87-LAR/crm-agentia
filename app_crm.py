@@ -11,7 +11,7 @@ import urllib.parse
 from sqlalchemy import create_engine, text
 import io
 import zipfile
-import time  # NUEVO: Necesario para que Google no nos bloquee por velocidad
+import time
 
 # --- 1. CONFIGURACIÓN DE INTELIGENCIA ARTIFICIAL Y PÁGINA ---
 st.set_page_config(page_title="Agentia CRM", layout="wide", page_icon="icono_agentia.png")
@@ -164,7 +164,7 @@ PLANTILLA_IA = """
 def analizar_con_ia(texto_sucio):
     instruccion = f"""Eres un robot experto en seguros. Tu ÚNICA tarea es extraer información y devolverla ESTRICTAMENTE en este formato JSON, sin saludos, sin explicaciones, sin texto extra:\n{PLANTILLA_IA}\nSi un campo no aparece, pon "No especificado". Las fechas deben ser DD/MM/AAAA. Calcula fecha_nacimiento con el RFC si es posible."""
     
-    # SISTEMA ANTI-BLOQUEO PARA LA API GRATUITA (3 Reintentos)
+    # SISTEMA ANTI-BLOQUEO ACTUALIZADO (Pausa de 60 segundos si Google lo pide)
     for intento in range(3):
         try:
             prompt_completo = f"{instruccion}\n\n--- DOCUMENTO ---\n{texto_sucio}"
@@ -172,8 +172,8 @@ def analizar_con_ia(texto_sucio):
             return response.text
         except Exception as e: 
             if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                if intento < 2:  # Si falla por cuota, espera 10 segundos y vuelve a intentar
-                    time.sleep(10)
+                if intento < 2:  
+                    time.sleep(60) # La pausa ahora es de 60 segundos exactos para evitar el castigo de Google
                     continue
             return f"ERROR_API: {str(e)}"
     return "ERROR_API: Demasiados reintentos, Google bloqueó por límite de velocidad temporal."
@@ -453,7 +453,10 @@ with pestana2:
     st.write("1️⃣ **Selecciona a quién le pertenecen las pólizas que vas a subir:**")
     ejecutivo_seleccionado = st.selectbox("Asignar producción a:", lista_dinamica_ejecutivos)
     st.write("2️⃣ **Arrastra los PDFs (Pólizas y Recibos):**")
-    st.caption("Nota: Si subes muchos archivos, el sistema pausará unos segundos entre cada uno para no saturar a Google.")
+    
+    # Notificación sutil para el usuario sobre la pausa
+    st.caption("⚡ Para mantener el servicio gratuito, el sistema hará una pausa automática si Google detecta mucha velocidad.")
+    
     archivos_subidos = st.file_uploader("Arrastra tus archivos aquí...", type=["pdf"], accept_multiple_files=True)
     
     if archivos_subidos and st.button("🚀 Iniciar Procesamiento Automático", type="primary"):
@@ -463,20 +466,21 @@ with pestana2:
         exitos = 0; errores = 0
         
         for i, archivo in enumerate(archivos_subidos):
-            with st.spinner(f"Leyendo: {archivo.name}... ({i+1}/{total_archivos})"):
+            with st.spinner(f"Procesando: {archivo.name}... ({i+1}/{total_archivos})"):
                 texto_crudo = extraer_texto_pdf(archivo)
                 datos_json = None
                 pdf_bytes = archivo.getvalue()
                 error_api = ""
                 
-                # Intentamos procesarlo con la IA
+                # Intentamos procesarlo con la IA (Texto Plano)
                 if texto_crudo and len(texto_crudo.strip()) > 20: 
                     respuesta_texto = analizar_con_ia(texto_crudo)
+                    # Si falla por cuota en el texto, el mensaje vendrá en "respuesta_texto"
                 else:
+                    # Intentamos con Visión Artificial si el PDF es una imagen escaneada
                     ruta_temp = f"temp_{i}.pdf"
                     with open(ruta_temp, "wb") as f: f.write(pdf_bytes)
                     try:
-                        # Intento con imagen si no hay texto extraible (con anti-bloqueo)
                         for intento_vision in range(3):
                             try:
                                 archivo_gemini = client.files.upload(file=ruta_temp)
@@ -485,8 +489,9 @@ with pestana2:
                                 respuesta_texto = response.text
                                 break
                             except Exception as ev:
-                                if "429" in str(ev) and intento_vision < 2:
-                                    time.sleep(10)
+                                if ("429" in str(ev) or "RESOURCE_EXHAUSTED" in str(ev)) and intento_vision < 2:
+                                    st.toast(f"⏳ Pausando 60s para enfriar el motor de IA... (Intento {intento_vision+1})")
+                                    time.sleep(60)
                                     continue
                                 respuesta_texto = f"ERROR_API: {str(ev)}"
                     except Exception as e:
@@ -497,13 +502,13 @@ with pestana2:
                             except: pass
                 
                 # Validamos el resultado
-                if respuesta_texto and not respuesta_texto.startswith("ERROR"):
+                if respuesta_texto and not respuesta_texto.startswith("ERROR_API"):
                     datos_json = limpiar_json(respuesta_texto)
                     if not datos_json: error_api = f"La IA no devolvió JSON válido."
                 else:
                     error_api = respuesta_texto
                 
-                # Guardamos
+                # Guardamos en Base de Datos
                 if datos_json:
                     resultado = guardar_poliza_bd(datos_json, pdf_bytes=pdf_bytes, ejecutivo=ejecutivo_seleccionado)
                     if isinstance(resultado, str) and not resultado.startswith("Error"): 
@@ -516,7 +521,8 @@ with pestana2:
                     st.error(f"⚠️ {archivo.name} no se pudo leer. Detalles: {error_api}")
             
             barra_progreso.progress((i + 1) / total_archivos)
-            # PAUSA ANTI-BLOQUEO DE GOOGLE
+            
+            # PAUSA LIGERA ENTRE ARCHIVOS (Solo si hay varios, ayuda a no saturar a Google)
             if i < total_archivos - 1:
                 time.sleep(4)
                 

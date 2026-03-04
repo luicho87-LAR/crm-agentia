@@ -14,14 +14,14 @@ import zipfile
 import time
 import re
 
-# --- 1. CONFIGURACIÓN DE INTELIGENCIA ARTIFICIAL Y PÁGINA ---
+# --- 1. SƐTIN FƆ SƐNS MASHIN ƐN PEJ ---
 st.set_page_config(page_title="Agentia CRM", layout="wide", page_icon="icono_agentia.png")
 
-# 🚨 ¡PEGA TU LLAVE AQUÍ ADENTRO DE LAS COMILLAS! 🚨
+# 🚨 AYD YU API KEY NA STREAMLIT SECRETS 🚨
 API_KEY = st.secrets["GEMINI_API_KEY"] 
 client = genai.Client(api_key=API_KEY)
 
-# --- ✨ INYECCIÓN DE DISEÑO PREMIUM (UI/UX) ✨ ---
+# --- ✨ PREMIUM DIZAYN (UI/UX) ✨ ---
 st.markdown("""
 <style>
     .stApp { background-color: #f4f7f9; background-image: radial-gradient(circle at 50% 0%, #e0edfb 0%, #f4f7f9 40%); }
@@ -165,22 +165,19 @@ PLANTILLA_IA = """
 def analizar_con_ia(texto_sucio):
     instruccion = f"""Eres un robot experto en seguros. Tu ÚNICA tarea es extraer información y devolverla ESTRICTAMENTE en este formato JSON, sin saludos, sin explicaciones, sin texto extra:\n{PLANTILLA_IA}\nSi un campo no aparece, pon "No especificado". Las fechas deben ser DD/MM/AAAA. Calcula fecha_nacimiento con el RFC si es posible."""
     
-    # SISTEMA ANTI-BLOQUEO INTELIGENTE: Detecta los segundos que pide Google
-    for intento in range(5):
+    # Motor de velocidad: 3 intentos rápidos por si hay un fallo de red. Sin frenos de tiempo largos.
+    for intento in range(3):
         try:
             prompt_completo = f"{instruccion}\n\n--- DOCUMENTO ---\n{texto_sucio}"
             response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt_completo)
             return response.text
         except Exception as e: 
             error_str = str(e)
-            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
-                if intento < 4:  
-                    match = re.search(r"retry in (\d+\.?\d*)s", error_str)
-                    wait_time = float(match.group(1)) + 2 if match else 30
-                    time.sleep(wait_time)
-                    continue
+            if intento < 2:  
+                time.sleep(2) # Pausa mínima de 2 segundos solo por estabilidad de red
+                continue
             return f"ERROR_API: {error_str}"
-    return "ERROR_API: Excedido el límite de velocidad tras 5 reintentos."
+    return "ERROR_API: Error de conexión con Google."
 
 def guardar_poliza_bd(datos, pdf_bytes=None, ejecutivo="Titular (Agencia)"):
     if not isinstance(datos, dict):
@@ -458,7 +455,7 @@ with pestana2:
     ejecutivo_seleccionado = st.selectbox("Asignar producción a:", lista_dinamica_ejecutivos)
     st.write("2️⃣ **Arrastra los PDFs (Pólizas y Recibos):**")
     
-    st.caption("⚡ Para mantener el servicio 100% gratuito de Google, el sistema leerá los tiempos de espera oficiales y pausará automáticamente cuando sea necesario.")
+    st.caption("⚡ Modo Turbo (API de Pago Activada). El sistema procesará sin pausas artificiales.")
     
     archivos_subidos = st.file_uploader("Arrastra tus archivos aquí...", type=["pdf"], accept_multiple_files=True)
     
@@ -481,7 +478,7 @@ with pestana2:
                     ruta_temp = f"temp_{i}.pdf"
                     with open(ruta_temp, "wb") as f: f.write(pdf_bytes)
                     try:
-                        for intento_vision in range(5):
+                        for intento_vision in range(3):
                             try:
                                 archivo_gemini = client.files.upload(file=ruta_temp)
                                 instruccion_vision = f"Extrae informacion SOLO en JSON:\n{PLANTILLA_IA}"
@@ -490,11 +487,8 @@ with pestana2:
                                 break
                             except Exception as ev:
                                 error_str_v = str(ev)
-                                if ("429" in error_str_v or "RESOURCE_EXHAUSTED" in error_str_v) and intento_vision < 4:
-                                    match = re.search(r"retry in (\d+\.?\d*)s", error_str_v)
-                                    wait_time = float(match.group(1)) + 2 if match else 30
-                                    st.toast(f"⏳ Google pide pausa. Esperando {int(wait_time)}s... (Intento {intento_vision+1}/5)")
-                                    time.sleep(wait_time)
+                                if intento_vision < 2:
+                                    time.sleep(2) # Pausa mínima solo si hay error de red
                                     continue
                                 respuesta_texto = f"ERROR_API: {error_str_v}"
                                 break
@@ -524,9 +518,7 @@ with pestana2:
             
             barra_progreso.progress((i + 1) / total_archivos)
             
-            # Pausa ligera de seguridad entre un PDF y otro
-            if i < total_archivos - 1:
-                time.sleep(5)
+            # ELIMINAMOS EL TIME.SLEEP DE AQUÍ PORQUE YA TIENES LLAVE DE PAGO
                 
         if errores == 0:
             st.success(f"✅ ¡Se procesaron {exitos} documentos con éxito!")

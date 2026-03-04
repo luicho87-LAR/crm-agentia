@@ -164,19 +164,19 @@ PLANTILLA_IA = """
 def analizar_con_ia(texto_sucio):
     instruccion = f"""Eres un robot experto en seguros. Tu ÚNICA tarea es extraer información y devolverla ESTRICTAMENTE en este formato JSON, sin saludos, sin explicaciones, sin texto extra:\n{PLANTILLA_IA}\nSi un campo no aparece, pon "No especificado". Las fechas deben ser DD/MM/AAAA. Calcula fecha_nacimiento con el RFC si es posible."""
     
-    # SISTEMA ANTI-BLOQUEO ACTUALIZADO (Pausa de 60 segundos si Google lo pide)
-    for intento in range(3):
+    # SISTEMA ANTI-BLOQUEO MEJORADO (5 Reintentos escalonados)
+    for intento in range(5):
         try:
             prompt_completo = f"{instruccion}\n\n--- DOCUMENTO ---\n{texto_sucio}"
             response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt_completo)
             return response.text
         except Exception as e: 
             if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                if intento < 2:  
-                    time.sleep(60) # La pausa ahora es de 60 segundos exactos para evitar el castigo de Google
+                if intento < 4:  
+                    time.sleep(20) # Pausas de 20s para ir limpiando el límite de Google
                     continue
             return f"ERROR_API: {str(e)}"
-    return "ERROR_API: Demasiados reintentos, Google bloqueó por límite de velocidad temporal."
+    return "ERROR_API: Excedido el límite de velocidad tras 5 reintentos."
 
 def guardar_poliza_bd(datos, pdf_bytes=None, ejecutivo="Titular (Agencia)"):
     if not isinstance(datos, dict):
@@ -455,7 +455,7 @@ with pestana2:
     st.write("2️⃣ **Arrastra los PDFs (Pólizas y Recibos):**")
     
     # Notificación sutil para el usuario sobre la pausa
-    st.caption("⚡ Para mantener el servicio gratuito, el sistema hará una pausa automática si Google detecta mucha velocidad.")
+    st.caption("⚡ Para mantener el servicio gratuito de Google, el sistema hará pausas automáticas entre archivos para no saturar.")
     
     archivos_subidos = st.file_uploader("Arrastra tus archivos aquí...", type=["pdf"], accept_multiple_files=True)
     
@@ -475,13 +475,12 @@ with pestana2:
                 # Intentamos procesarlo con la IA (Texto Plano)
                 if texto_crudo and len(texto_crudo.strip()) > 20: 
                     respuesta_texto = analizar_con_ia(texto_crudo)
-                    # Si falla por cuota en el texto, el mensaje vendrá en "respuesta_texto"
                 else:
                     # Intentamos con Visión Artificial si el PDF es una imagen escaneada
                     ruta_temp = f"temp_{i}.pdf"
                     with open(ruta_temp, "wb") as f: f.write(pdf_bytes)
                     try:
-                        for intento_vision in range(3):
+                        for intento_vision in range(5):
                             try:
                                 archivo_gemini = client.files.upload(file=ruta_temp)
                                 instruccion_vision = f"Extrae informacion SOLO en JSON:\n{PLANTILLA_IA}"
@@ -489,11 +488,12 @@ with pestana2:
                                 respuesta_texto = response.text
                                 break
                             except Exception as ev:
-                                if ("429" in str(ev) or "RESOURCE_EXHAUSTED" in str(ev)) and intento_vision < 2:
-                                    st.toast(f"⏳ Pausando 60s para enfriar el motor de IA... (Intento {intento_vision+1})")
-                                    time.sleep(60)
+                                if ("429" in str(ev) or "RESOURCE_EXHAUSTED" in str(ev)) and intento_vision < 4:
+                                    st.toast(f"⏳ Google ocupado. Reintentando en 20s... (Intento {intento_vision+1}/5)")
+                                    time.sleep(20)
                                     continue
                                 respuesta_texto = f"ERROR_API: {str(ev)}"
+                                break
                     except Exception as e:
                         respuesta_texto = f"ERROR_API: {str(e)}"
                     finally:
@@ -522,9 +522,10 @@ with pestana2:
             
             barra_progreso.progress((i + 1) / total_archivos)
             
-            # PAUSA LIGERA ENTRE ARCHIVOS (Solo si hay varios, ayuda a no saturar a Google)
+            # PAUSA LIGERA ENTRE ARCHIVOS PARA NO SATURAR EL LÍMITE GRATUITO
             if i < total_archivos - 1:
-                time.sleep(4)
+                st.toast("Pausando 10 segundos para no saturar a Google...")
+                time.sleep(10)
                 
         if errores == 0:
             st.success(f"✅ ¡Se procesaron {exitos} documentos con éxito!")

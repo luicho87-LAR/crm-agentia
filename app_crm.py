@@ -13,6 +13,7 @@ import io
 import zipfile
 import time
 import re
+import plotly.express as px # NUEVO: Librería para gráficos premium
 
 # --- 1. CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Agentia CRM", layout="wide", page_icon="icono_agentia.png")
@@ -477,14 +478,24 @@ with pestana0:
         except:
             return 0.0
 
+    # GRÁFICOS CON PLOTLY (AESTHETIC)
     col_g1, col_g2 = st.columns(2)
     with col_g1:
         st.markdown("##### 🚗 Pólizas por Ramo")
         df_ramos = pd.read_sql_query("SELECT tipo_producto FROM Polizas", engine)
         if not df_ramos.empty:
             df_ramos['Ramo'] = df_ramos['tipo_producto'].apply(normalizar_ramo)
-            df_ramos_agrupado = df_ramos.groupby('Ramo').size().reset_index(name='Total').set_index('Ramo')
-            st.bar_chart(df_ramos_agrupado, color="#0b7af0")
+            df_ramos_agrupado = df_ramos.groupby('Ramo').size().reset_index(name='Total')
+            
+            # Gráfico de Barras Multicolor
+            fig_ramos = px.bar(df_ramos_agrupado, x='Ramo', y='Total', color='Ramo', text_auto=True)
+            fig_ramos.update_layout(
+                xaxis_title="", 
+                yaxis_title="", 
+                showlegend=False, 
+                margin=dict(l=0, r=0, t=10, b=0)
+            )
+            st.plotly_chart(fig_ramos, use_container_width=True, theme="streamlit")
         else:
             st.info("Sube pólizas para ver esta gráfica.")
             
@@ -496,11 +507,18 @@ with pestana0:
             df_primas['Aseguradora'] = df_primas['aseguradora'].apply(normalizar_aseguradora)
             df_primas['Prima'] = df_primas['prima_total'].apply(limpiar_dinero)
             
-            df_primas_agrupado = df_primas.groupby('Aseguradora')['Prima'].sum().reset_index().set_index('Aseguradora')
+            df_primas_agrupado = df_primas.groupby('Aseguradora')['Prima'].sum().reset_index()
             df_primas_agrupado = df_primas_agrupado[df_primas_agrupado['Prima'] > 0]
             
             if not df_primas_agrupado.empty:
-                st.bar_chart(df_primas_agrupado, color="#2ecc71")
+                # Gráfico de Anillo (Donut) Multicolor
+                fig_primas = px.pie(df_primas_agrupado, values='Prima', names='Aseguradora', hole=0.5)
+                fig_primas.update_traces(textposition='inside', textinfo='percent+label', hoverinfo='label+percent+value')
+                fig_primas.update_layout(
+                    showlegend=False, 
+                    margin=dict(l=0, r=0, t=10, b=0)
+                )
+                st.plotly_chart(fig_primas, use_container_width=True, theme="streamlit")
             else:
                 st.info("Ninguna póliza registrada tiene la 'Prima Total' aún. Vuelve a escanearlas.")
         else:

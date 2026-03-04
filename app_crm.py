@@ -86,6 +86,8 @@ def inicializar_bd_completa():
         
         conn.execute(text('''ALTER TABLE Polizas ADD COLUMN IF NOT EXISTS tipo_producto TEXT DEFAULT 'No especificado' '''))
         conn.execute(text('''ALTER TABLE Polizas ADD COLUMN IF NOT EXISTS vehiculo TEXT DEFAULT 'N/A' '''))
+        # NUEVO: Agregamos la columna de Prima Total a la base de datos
+        conn.execute(text('''ALTER TABLE Polizas ADD COLUMN IF NOT EXISTS prima_total TEXT DEFAULT '0' '''))
         
         res = conn.execute(text("SELECT COUNT(*) FROM Ejecutivos")).scalar()
         if res == 0:
@@ -155,6 +157,7 @@ PLANTILLA_IA = """
     "direccion_completa": "Calle Falsa 123",
     "tipo_producto": "Autos",
     "vehiculo": "Nissan Versa 2023",
+    "prima_total": "15000.00",
     "fecha_limite_pago": "15/01/2024",
     "monto_a_pagar": "1500.00",
     "forma_pago": "Tarjeta de Credito",
@@ -163,18 +166,20 @@ PLANTILLA_IA = """
 """
 
 def analizar_con_ia(texto_sucio):
-    instruccion = f"""Eres un robot experto en seguros. Tu ÚNICA tarea es extraer información y devolverla ESTRICTAMENTE en este formato JSON, sin saludos, sin explicaciones, sin texto extra:\n{PLANTILLA_IA}\nSi un campo no aparece, pon "No especificado". Las fechas deben ser DD/MM/AAAA. Calcula fecha_nacimiento con el RFC si es posible."""
+    instruccion = f"""Eres un robot experto en seguros. Tu ÚNICA tarea es extraer información y devolverla ESTRICTAMENTE en este formato JSON, sin saludos ni texto extra:\n{PLANTILLA_IA}\nSi un campo no aparece, pon "No especificado". Busca la "prima_total" (PRIMA TOTAL o PRIMA TOTAL A PAGAR indicada en la carátula de la póliza). Las fechas deben ser DD/MM/AAAA. Calcula fecha_nacimiento con el RFC si es posible."""
     
-    # Motor de velocidad: 3 intentos rápidos por si hay un fallo de red. Sin frenos de tiempo largos.
-    for intento in range(3):
+    # Restauramos el motor anti-bloqueos para la versión gratuita
+    for intento in range(5):
         try:
             prompt_completo = f"{instruccion}\n\n--- DOCUMENTO ---\n{texto_sucio}"
             response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt_completo)
             return response.text
         except Exception as e: 
             error_str = str(e)
-            if intento < 2:  
-                time.sleep(2) # Pausa mínima de 2 segundos solo por estabilidad de red
+            if ("429" in error_str or "RESOURCE_EXHAUSTED" in error_str) and intento < 4:  
+                match = re.search(r"retry in (\d+\.?\d*)s", error_str)
+                wait_time = float(match.group(1)) + 2 if match else 30
+                time.sleep(wait_time)
                 continue
             return f"ERROR_API: {error_str}"
     return "ERROR_API: Error de conexión con Google."
@@ -214,19 +219,22 @@ def guardar_poliza_bd(datos, pdf_bytes=None, ejecutivo="Titular (Agencia)"):
             ini = str(datos.get('inicio_vigencia', 'No especificado'))
             fin = str(datos.get('fin_vigencia', 'No especificado'))
             
+            # NUEVO: Obtenemos la Prima Total extraída por la IA
+            prima_t = str(datos.get('prima_total', '0'))
+            
             if 'poliza' in tipo_doc.lower():
                 conn.execute(text("""
-                    INSERT INTO Polizas (numero_poliza, rfc_cliente, aseguradora, inicio_vigencia, fin_vigencia, archivo_pdf, ejecutivo, tipo_producto, vehiculo) 
-                    VALUES (:pol, :rfc, :aseg, :ini, :fin, :pdf, :ejec, :prod, :veh)
+                    INSERT INTO Polizas (numero_poliza, rfc_cliente, aseguradora, inicio_vigencia, fin_vigencia, archivo_pdf, ejecutivo, tipo_producto, vehiculo, prima_total) 
+                    VALUES (:pol, :rfc, :aseg, :ini, :fin, :pdf, :ejec, :prod, :veh, :primat)
                     ON CONFLICT (numero_poliza) DO UPDATE SET 
-                    inicio_vigencia=EXCLUDED.inicio_vigencia, fin_vigencia=EXCLUDED.fin_vigencia, archivo_pdf=EXCLUDED.archivo_pdf, ejecutivo=EXCLUDED.ejecutivo, tipo_producto=EXCLUDED.tipo_producto, vehiculo=EXCLUDED.vehiculo
-                """), {"pol": num_pol, "rfc": rfc, "aseg": aseg, "ini": ini, "fin": fin, "pdf": pdf_bytes, "ejec": ejecutivo, "prod": prod, "veh": veh})
+                    inicio_vigencia=EXCLUDED.inicio_vigencia, fin_vigencia=EXCLUDED.fin_vigencia, archivo_pdf=EXCLUDED.archivo_pdf, ejecutivo=EXCLUDED.ejecutivo, tipo_producto=EXCLUDED.tipo_producto, vehiculo=EXCLUDED.vehiculo, prima_total=EXCLUDED.prima_total
+                """), {"pol": num_pol, "rfc": rfc, "aseg": aseg, "ini": ini, "fin": fin, "pdf": pdf_bytes, "ejec": ejecutivo, "prod": prod, "veh": veh, "primat": prima_t})
             else:
                 conn.execute(text("""
-                    INSERT INTO Polizas (numero_poliza, rfc_cliente, aseguradora, inicio_vigencia, fin_vigencia, archivo_pdf, ejecutivo, tipo_producto, vehiculo) 
-                    VALUES (:pol, :rfc, :aseg, :ini, :fin, :pdf, :ejec, :prod, :veh)
+                    INSERT INTO Polizas (numero_poliza, rfc_cliente, aseguradora, inicio_vigencia, fin_vigencia, archivo_pdf, ejecutivo, tipo_producto, vehiculo, prima_total) 
+                    VALUES (:pol, :rfc, :aseg, :ini, :fin, :pdf, :ejec, :prod, :veh, :primat)
                     ON CONFLICT (numero_poliza) DO NOTHING
-                """), {"pol": num_pol, "rfc": rfc, "aseg": aseg, "ini": ini, "fin": fin, "pdf": pdf_bytes, "ejec": ejecutivo, "prod": prod, "veh": veh})
+                """), {"pol": num_pol, "rfc": rfc, "aseg": aseg, "ini": ini, "fin": fin, "pdf": pdf_bytes, "ejec": ejecutivo, "prod": prod, "veh": veh, "primat": prima_t})
             
             fecha_pago = datos.get('fecha_limite_pago')
             if fecha_pago and str(fecha_pago).lower() not in ['no especificado', 'none', 'null', 'na', '']:
@@ -433,7 +441,7 @@ with pestana0:
         if "BUPA" in t: return "BUPA"
         if "ALLIANZ" in t: return "Allianz"
         
-        return t.title() # Si es una nueva, la capitaliza bonito
+        return t.title()
 
     def limpiar_dinero(val):
         try:
@@ -456,30 +464,23 @@ with pestana0:
             st.info("Sube pólizas para ver esta gráfica.")
             
     with col_g2:
-        st.markdown("##### 🏢 Prima Registrada por Aseguradora")
-        # Unimos pólizas con recibos para sumar el dinero
-        query_primas = """
-        SELECT p.aseguradora, r.monto, r.estado 
-        FROM Polizas p 
-        JOIN Recibos r ON p.numero_poliza = r.numero_poliza
-        """
+        st.markdown("##### 🏢 Prima Total por Aseguradora")
+        # Ahora sumamos la Prima Total directamente desde la carátula de la póliza
+        query_primas = "SELECT aseguradora, prima_total FROM Polizas"
         df_primas = pd.read_sql_query(query_primas, engine)
         if not df_primas.empty:
             df_primas['Aseguradora'] = df_primas['aseguradora'].apply(normalizar_aseguradora)
-            df_primas['Prima'] = df_primas['monto'].apply(limpiar_dinero)
+            df_primas['Prima'] = df_primas['prima_total'].apply(limpiar_dinero)
             
-            # Agrupamos sumando todo el dinero de los recibos
             df_primas_agrupado = df_primas.groupby('Aseguradora')['Prima'].sum().reset_index().set_index('Aseguradora')
-            
-            # Filtramos para no mostrar compañías con $0
             df_primas_agrupado = df_primas_agrupado[df_primas_agrupado['Prima'] > 0]
             
             if not df_primas_agrupado.empty:
                 st.bar_chart(df_primas_agrupado, color="#2ecc71")
             else:
-                st.info("Ninguna póliza registrada tiene montos válidos aún.")
+                st.info("Ninguna póliza registrada tiene la 'Prima Total' aún. Vuelve a escanearlas.")
         else:
-            st.info("Sube pólizas que contengan recibos para graficar la prima.")
+            st.info("Sube pólizas para graficar la prima.")
 
 # ==========================================
 # PESTAÑA 1: BUSCADOR VIP 
@@ -567,7 +568,7 @@ with pestana2:
     ejecutivo_seleccionado = st.selectbox("Asignar producción a:", lista_dinamica_ejecutivos)
     st.write("2️⃣ **Arrastra los PDFs (Pólizas y Recibos):**")
     
-    st.caption("⚡ Modo Turbo (API de Pago Activada). El sistema procesará sin pausas artificiales.")
+    st.caption("⚡ Modo Seguro (Capa Gratuita). El sistema pausará y obedecerá los límites de Google automáticamente.")
     
     archivos_subidos = st.file_uploader("Arrastra tus archivos aquí...", type=["pdf"], accept_multiple_files=True)
     
@@ -590,7 +591,7 @@ with pestana2:
                     ruta_temp = f"temp_{i}.pdf"
                     with open(ruta_temp, "wb") as f: f.write(pdf_bytes)
                     try:
-                        for intento_vision in range(3):
+                        for intento_vision in range(5):
                             try:
                                 archivo_gemini = client.files.upload(file=ruta_temp)
                                 instruccion_vision = f"Extrae informacion SOLO en JSON:\n{PLANTILLA_IA}"
@@ -599,8 +600,11 @@ with pestana2:
                                 break
                             except Exception as ev:
                                 error_str_v = str(ev)
-                                if intento_vision < 2:
-                                    time.sleep(2) # Pausa mínima solo si hay error de red
+                                if ("429" in error_str_v or "RESOURCE_EXHAUSTED" in error_str_v) and intento_vision < 4:
+                                    match = re.search(r"retry in (\d+\.?\d*)s", error_str_v)
+                                    wait_time = float(match.group(1)) + 2 if match else 30
+                                    st.toast(f"⏳ Google pide pausa. Esperando {int(wait_time)}s... (Intento {intento_vision+1}/5)")
+                                    time.sleep(wait_time)
                                     continue
                                 respuesta_texto = f"ERROR_API: {error_str_v}"
                                 break
@@ -630,7 +634,9 @@ with pestana2:
             
             barra_progreso.progress((i + 1) / total_archivos)
             
-            # ELIMINAMOS EL TIME.SLEEP DE AQUÍ PORQUE YA TIENES LLAVE DE PAGO
+            # Pausa ligera de seguridad entre archivos
+            if i < total_archivos - 1:
+                time.sleep(5)
                 
         if errores == 0:
             st.success(f"✅ ¡Se procesaron {exitos} documentos con éxito!")

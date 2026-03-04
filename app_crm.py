@@ -14,26 +14,44 @@ import zipfile
 import time
 import re
 
-# --- 1. SƐTIN FƆ SƐNS MASHIN ƐN PEJ ---
+# --- 1. CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Agentia CRM", layout="wide", page_icon="icono_agentia.png")
 
-# 🚨 AYD YU API KEY NA STREAMLIT SECRETS 🚨
-API_KEY = st.secrets["GEMINI_API_KEY"] 
+# 🚨 LLAVE DE IA (SECRETS) 🚨
+API_KEY = st.secrets["GEMINI_API_KEY"]
 client = genai.Client(api_key=API_KEY)
 
-# --- ✨ PREMIUM DIZAYN (UI/UX) ✨ ---
+# --- ✨ DISEÑO ADAPTATIVO (MÓVIL Y MODO OSCURO) ✨ ---
 st.markdown("""
 <style>
-    .stApp { background-color: #f4f7f9; background-image: radial-gradient(circle at 50% 0%, #e0edfb 0%, #f4f7f9 40%); }
-    div[data-testid="metric-container"] { background-color: #ffffff; border: 1px solid #e1e8ed; padding: 15px 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.04); border-top: 4px solid #0b7af0; transition: transform 0.2s ease, box-shadow 0.2s ease; }
-    div[data-testid="metric-container"]:hover { transform: translateY(-3px); box-shadow: 0 8px 15px rgba(11, 122, 240, 0.1); }
-    div.stButton > button[kind="primary"] { background: linear-gradient(135deg, #0b7af0 0%, #0052a3 100%); color: white; border-radius: 8px; border: none; padding: 0.6rem 1.2rem; font-weight: 600; box-shadow: 0 4px 12px rgba(11, 122, 240, 0.3); transition: all 0.3s ease; }
-    div.stButton > button[kind="primary"]:hover { box-shadow: 0 6px 18px rgba(11, 122, 240, 0.5); transform: scale(1.02); }
-    div[data-testid="stExpander"] { background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.03); border: 1px solid #eef2f5; overflow: hidden; margin-bottom: 1rem; }
-    div[data-testid="stExpander"] details summary { background-color: #ffffff; padding: 10px; font-size: 1.05rem; color: #1e293b; }
-    button[data-baseweb="tab"] { font-size: 16px; font-weight: 600; border-radius: 8px 8px 0 0; padding: 10px 16px; margin-right: 2px; }
-    button[data-baseweb="tab"][aria-selected="true"] { background-color: #eaf3fc; color: #0b7af0; border-bottom: 3px solid #0b7af0; }
-    div[data-baseweb="input"] > div, div[data-baseweb="select"] > div { border-radius: 8px; border: 1px solid #d1d9e0; }
+    /* Estilos que respetan el modo claro/oscuro nativo de Streamlit */
+    div[data-testid="metric-container"] { 
+        border: 1px solid rgba(128, 128, 128, 0.2); 
+        padding: 15px 20px; 
+        border-radius: 12px; 
+        box-shadow: 0 4px 10px rgba(0,0,0,0.05); 
+        border-top: 4px solid #0b7af0; 
+        background-color: transparent;
+    }
+    div.stButton > button[kind="primary"] { 
+        background: linear-gradient(135deg, #0b7af0 0%, #0052a3 100%); 
+        color: white; 
+        border-radius: 8px; 
+        border: none; 
+        font-weight: 600; 
+        transition: all 0.3s ease; 
+    }
+    div.stButton > button[kind="secondary"] {
+        border-radius: 8px; 
+        font-weight: 600; 
+    }
+    div[data-testid="stExpander"] { 
+        border-radius: 12px; 
+        border: 1px solid rgba(128, 128, 128, 0.2); 
+        margin-bottom: 1rem; 
+        background-color: transparent;
+    }
+    .block-container { padding-top: 2rem; }
     #MainMenu {visibility: hidden;} footer {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
@@ -45,14 +63,16 @@ if 'autenticado' not in st.session_state:
 if not st.session_state['autenticado']:
     col_espacio1, col_login, col_espacio2 = st.columns([1, 1.5, 1])
     with col_login:
-        st.markdown("<br><br><br>", unsafe_allow_html=True)
+        st.write("")
+        st.write("")
         c_izq, c_centro_img, c_der = st.columns([1, 2, 1])
         with c_centro_img:
             if os.path.exists("logo_crm.png"):
                 st.image("logo_crm.png", use_container_width=True)
-        st.markdown("""<h4 style='text-align: center; color: #0b7af0; font-weight: 600; letter-spacing: 1px; margin-top: -10px; margin-bottom: 30px;'>Inteligencia para vender más</h4>""", unsafe_allow_html=True)
+            else:
+                st.markdown("<h2 style='text-align: center; color: #0b7af0;'>AGENTIA CRM</h2>", unsafe_allow_html=True)
+        st.markdown("""<h4 style='text-align: center; color: #888; font-weight: 400; letter-spacing: 1px; margin-bottom: 30px;'>Inteligencia para vender más</h4>""", unsafe_allow_html=True)
             
-        st.markdown("<h5 style='text-align: center;'>🔐 Acceso Corporativo</h5>", unsafe_allow_html=True)
         with st.form("form_login"):
             usuario = st.text_input("Usuario", placeholder="Ej. admin")
             contrasena = st.text_input("Contraseña", type="password", placeholder="••••••••")
@@ -60,6 +80,7 @@ if not st.session_state['autenticado']:
             if boton_entrar:
                 if usuario == "admin" and contrasena == "Agentia2026":
                     st.session_state['autenticado'] = True
+                    st.session_state['usuario_actual'] = usuario
                     st.rerun()
                 else: st.error("Usuario o contraseña incorrectos.")
     st.stop()
@@ -86,7 +107,6 @@ def inicializar_bd_completa():
         
         conn.execute(text('''ALTER TABLE Polizas ADD COLUMN IF NOT EXISTS tipo_producto TEXT DEFAULT 'No especificado' '''))
         conn.execute(text('''ALTER TABLE Polizas ADD COLUMN IF NOT EXISTS vehiculo TEXT DEFAULT 'N/A' '''))
-        # NUEVO: Agregamos la columna de Prima Total a la base de datos
         conn.execute(text('''ALTER TABLE Polizas ADD COLUMN IF NOT EXISTS prima_total TEXT DEFAULT '0' '''))
         
         res = conn.execute(text("SELECT COUNT(*) FROM Ejecutivos")).scalar()
@@ -168,7 +188,6 @@ PLANTILLA_IA = """
 def analizar_con_ia(texto_sucio):
     instruccion = f"""Eres un robot experto en seguros. Tu ÚNICA tarea es extraer información y devolverla ESTRICTAMENTE en este formato JSON, sin saludos ni texto extra:\n{PLANTILLA_IA}\nSi un campo no aparece, pon "No especificado". Busca la "prima_total" (PRIMA TOTAL o PRIMA TOTAL A PAGAR indicada en la carátula de la póliza). Las fechas deben ser DD/MM/AAAA. Calcula fecha_nacimiento con el RFC si es posible."""
     
-    # Restauramos el motor anti-bloqueos para la versión gratuita
     for intento in range(5):
         try:
             prompt_completo = f"{instruccion}\n\n--- DOCUMENTO ---\n{texto_sucio}"
@@ -218,8 +237,6 @@ def guardar_poliza_bd(datos, pdf_bytes=None, ejecutivo="Titular (Agencia)"):
             aseg = str(datos.get('aseguradora', 'No especificado'))
             ini = str(datos.get('inicio_vigencia', 'No especificado'))
             fin = str(datos.get('fin_vigencia', 'No especificado'))
-            
-            # NUEVO: Obtenemos la Prima Total extraída por la IA
             prima_t = str(datos.get('prima_total', '0'))
             
             if 'poliza' in tipo_doc.lower():
@@ -282,11 +299,18 @@ def generar_pdf_con_logos(df, titulo, fecha_inicio, fecha_fin):
     return pdf_bytes
 
 # --- 4. DISEÑO DE LA PANTALLA WEB E INTEGRACIÓN DE CONFIGURACIÓN ---
+col_head1, col_head2 = st.columns([3, 1])
+with col_head1:
+    st.success(f"👋 ¡Hola! Bienvenido a tu panel de control, **{st.session_state.get('usuario_actual', 'Ejecutivo')}**.")
+
+with col_head2:
+    if st.button("🚪 Cerrar Sesión", use_container_width=True):
+        st.session_state['autenticado'] = False
+        st.rerun()
+
 col_tit, col_vacia, col_der = st.columns([5, 1, 2])
 with col_tit:
-    st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("<h1 style='color: #0b7af0; margin-bottom: 0px;'>Sistema de Gestión Integral</h1>", unsafe_allow_html=True)
-    st.caption("Inteligencia para vender más")
 
 with col_der:
     if os.path.exists("logo_crm.png"):
@@ -308,7 +332,7 @@ with col_der:
             df_equipo = pd.read_sql_query("SELECT id as ID, nombre as Nombre FROM Ejecutivos ORDER BY id", engine)
             st.dataframe(df_equipo, hide_index=True, use_container_width=True)
             
-        with st.expander("📥 Importar Cartera Masiva (Excel/CSV)", expanded=False):
+        with st.expander("📥 Importar Cartera Masiva", expanded=False):
             df_plantilla = pd.DataFrame(columns=['Nombre_Completo', 'RFC', 'Telefono', 'Correo', 'Direccion', 'Aseguradora', 'Numero_Poliza', 'Inicio_Vigencia_DD/MM/AAAA', 'Fin_Vigencia_DD/MM/AAAA', 'Ejecutivo'])
             st.download_button(label="📥 Bajar Formato .CSV", data=df_plantilla.to_csv(index=False).encode('utf-8-sig'), file_name="Plantilla_Agentia.csv", mime='text/csv')
             
@@ -342,7 +366,7 @@ with col_der:
                     except Exception as e: st.error(f"Error técnico: {e}")
 
         with st.expander("☁️ Respaldo de Base de Datos", expanded=False):
-            st.info("Descarga un archivo ZIP con todos tus registros actuales para respaldarlo en Google Drive.")
+            st.info("Descarga un archivo ZIP con todos tus registros actuales.")
             if st.button("📦 Generar ZIP de Respaldo", type="primary", use_container_width=True):
                 with st.spinner("Empaquetando..."):
                     try:
@@ -378,12 +402,11 @@ pestana0, pestana1, pestana2, pestana3, pestana4, pestana5 = st.tabs([
 ])
 
 # ==========================================
-# PESTAÑA 0: DASHBOARD DIRECTOR (NUEVA)
+# PESTAÑA 0: DASHBOARD DIRECTOR 
 # ==========================================
 with pestana0:
     st.markdown("### 📊 Tablero de Control Ejecutivo")
     
-    # 1. Métricas Principales
     t_clientes = pd.read_sql_query("SELECT COUNT(*) FROM Clientes", engine).iloc[0,0]
     t_polizas = pd.read_sql_query("SELECT COUNT(*) FROM Polizas", engine).iloc[0,0]
     
@@ -416,14 +439,10 @@ with pestana0:
     def normalizar_aseguradora(texto):
         if pd.isna(texto) or str(texto).lower() in ['nan', 'none', '']: return "No especificada"
         t = str(texto).upper().strip()
-        
-        # Quitar puntos y comas
         t = t.replace('.', '').replace(',', '')
-        # Quitar terminaciones legales
         t = re.sub(r'\b(S A DE C V|S A B DE C V|S A P I DE C V|S A|SAB|SAPI|DE C V|C V)\b', '', t)
         t = re.sub(r'\s+', ' ', t).strip()
         
-        # Homologar marcas comerciales
         if "AXA" in t: return "AXA"
         if "GNP" in t or "NACIONAL PROVINCIAL" in t: return "GNP"
         if "QUALITAS" in t or "QUÁLITAS" in t: return "Quálitas"
@@ -440,7 +459,6 @@ with pestana0:
         if "ANA" in t: return "ANA Seguros"
         if "BUPA" in t: return "BUPA"
         if "ALLIANZ" in t: return "Allianz"
-        
         return t.title()
 
     def limpiar_dinero(val):
@@ -451,7 +469,6 @@ with pestana0:
         except:
             return 0.0
 
-    # 2. Gráficos Interactivos
     col_g1, col_g2 = st.columns(2)
     with col_g1:
         st.markdown("##### 🚗 Pólizas por Ramo")
@@ -465,7 +482,6 @@ with pestana0:
             
     with col_g2:
         st.markdown("##### 🏢 Prima Total por Aseguradora")
-        # Ahora sumamos la Prima Total directamente desde la carátula de la póliza
         query_primas = "SELECT aseguradora, prima_total FROM Polizas"
         df_primas = pd.read_sql_query(query_primas, engine)
         if not df_primas.empty:
@@ -487,13 +503,6 @@ with pestana0:
 # ==========================================
 with pestana1:
     st.markdown("### 📇 Archivo Digital de Clientes")
-    total_clientes = pd.read_sql_query("SELECT COUNT(*) FROM Clientes", engine).iloc[0,0]
-    total_polizas = pd.read_sql_query("SELECT COUNT(*) FROM Polizas", engine).iloc[0,0]
-    col_m1, col_m2, col_m3 = st.columns(3)
-    col_m1.metric("👥 Clientes en Cartera", total_clientes)
-    col_m2.metric("📑 Pólizas Activas", total_polizas)
-    col_m3.metric("📅 Actualización", datetime.now().strftime('%d/%m/%Y'))
-    st.markdown("<br>", unsafe_allow_html=True)
     
     busqueda = st.text_input("🔍 Escribe el Nombre o RFC del cliente para abrir su expediente:", placeholder="Ej. Luis Alberto...")
     if busqueda:
@@ -507,7 +516,7 @@ with pestana1:
                     col_c.write(f"**🎂 Nacimiento:** {cliente['fecha_nacimiento']}")
                     st.write(f"**📍 Dirección:** {cliente['direccion']}")
                     
-                    with st.popover("✏️ Editar perfil (Agregar Cumpleaños)"):
+                    with st.popover("✏️ Editar perfil"):
                         with st.form(f"form_editar_{cliente['rfc']}"):
                             nuevo_tel = st.text_input("Teléfono", value=cliente['telefono'] if cliente['telefono'] != "No especificado" else "")
                             nuevo_correo = st.text_input("Correo", value=cliente['correo'] if cliente['correo'] != "No especificado" else "")
@@ -547,11 +556,11 @@ with pestana1:
                                         st.success("Recibo agregado"); st.rerun()
                         
                         with col_btn2:
-                            with st.popover("🏷️ Clasificar Póliza / Vehículo"):
+                            with st.popover("🏷️ Clasificar Póliza"):
                                 with st.form(f"form_etiquetas_{cliente['rfc']}"):
-                                    poliza_clasificar = st.selectbox("Selecciona la póliza a clasificar", df_polizas['Poliza'].tolist())
+                                    poliza_clasificar = st.selectbox("Selecciona la póliza", df_polizas['Poliza'].tolist())
                                     nuevo_prod = st.selectbox("Tipo de Producto", ["Autos", "Gastos Médicos Mayores", "Vida", "Daños Empresariales", "Hogar", "Otro"])
-                                    nuevo_veh = st.text_input("Etiqueta del Vehículo (Solo si es Auto, ej. Nissan Versa 2023)")
+                                    nuevo_veh = st.text_input("Etiqueta del Vehículo (Auto)")
                                     if st.form_submit_button("Guardar Clasificación"):
                                         with engine.begin() as conn:
                                             conn.execute(text("UPDATE Polizas SET tipo_producto=:prod, vehiculo=:veh WHERE numero_poliza=:pol"), {"prod": nuevo_prod, "veh": nuevo_veh, "pol": poliza_clasificar})
@@ -564,17 +573,17 @@ with pestana1:
 # ==========================================
 with pestana2:
     st.markdown("### 🧠 Motor de Extracción IA")
-    st.write("1️⃣ **Selecciona a quién le pertenecen las pólizas que vas a subir:**")
+    st.write("1️⃣ **Selecciona a quién le pertenecen las pólizas:**")
     ejecutivo_seleccionado = st.selectbox("Asignar producción a:", lista_dinamica_ejecutivos)
     st.write("2️⃣ **Arrastra los PDFs (Pólizas y Recibos):**")
     
-    st.caption("⚡ Modo Seguro (Capa Gratuita). El sistema pausará y obedecerá los límites de Google automáticamente.")
+    st.caption("⚡ Modo Seguro. El sistema obedecerá los límites de Google automáticamente.")
     
     archivos_subidos = st.file_uploader("Arrastra tus archivos aquí...", type=["pdf"], accept_multiple_files=True)
     
-    if archivos_subidos and st.button("🚀 Iniciar Procesamiento Automático", type="primary"):
+    if archivos_subidos and st.button("🚀 Iniciar Procesamiento", type="primary"):
         total_archivos = len(archivos_subidos)
-        st.info(f"Analizando {total_archivos} documento(s) para {ejecutivo_seleccionado}...")
+        st.info(f"Analizando {total_archivos} documento(s)...")
         barra_progreso = st.progress(0)
         exitos = 0; errores = 0
         
@@ -627,22 +636,19 @@ with pestana2:
                         exitos += 1
                     else: 
                         errores += 1
-                        st.error(f"🛑 Error de base de datos con {archivo.name}: {resultado}")
+                        st.error(f"🛑 Error BD en {archivo.name}: {resultado}")
                 else: 
                     errores += 1
                     st.error(f"⚠️ {archivo.name} no se pudo leer. Detalles: {error_api}")
             
             barra_progreso.progress((i + 1) / total_archivos)
-            
-            # Pausa ligera de seguridad entre archivos
-            if i < total_archivos - 1:
-                time.sleep(5)
+            if i < total_archivos - 1: time.sleep(5)
                 
         if errores == 0:
             st.success(f"✅ ¡Se procesaron {exitos} documentos con éxito!")
             st.balloons()
         else: 
-            st.warning(f"⚠️ {exitos} guardados exitosamente. Hubo {errores} errores.")
+            st.warning(f"⚠️ {exitos} guardados. Hubo {errores} errores.")
 
 # ==========================================
 # PESTAÑA 3: PROSPECTOS MANUALES
@@ -684,7 +690,6 @@ with pestana3:
 # ==========================================
 with pestana4:
     st.markdown("### 🔄 Próximas Renovaciones (Alerta 30 días)")
-        
     df_alertas = pd.read_sql_query("SELECT c.nombre, c.telefono, p.aseguradora, p.numero_poliza, p.fin_vigencia, p.ejecutivo FROM Polizas p JOIN Clientes c ON p.rfc_cliente = c.rfc", engine)
     if not df_alertas.empty:
         df_alertas['fin_vigencia_dt'] = pd.to_datetime(df_alertas['fin_vigencia'], format='%d/%m/%Y', errors='coerce')
@@ -697,7 +702,6 @@ with pestana4:
     
     st.markdown("---")
     st.markdown("### 💰 Control de Cobranza (Recibos Fraccionados)")
-        
     df_cobranza = pd.read_sql_query("SELECT r.id, c.nombre, c.telefono, p.aseguradora, r.numero_poliza, r.monto, r.fecha_limite, p.ejecutivo FROM Recibos r JOIN Polizas p ON r.numero_poliza = p.numero_poliza JOIN Clientes c ON p.rfc_cliente = c.rfc WHERE r.estado = 'Pendiente'", engine)
     if not df_cobranza.empty:
         df_cobranza['fecha_dt'] = pd.to_datetime(df_cobranza['fecha_limite'], format='%d/%m/%Y', errors='coerce')
@@ -732,7 +736,6 @@ with pestana4:
         
     st.markdown("---")
     st.markdown("### 🎂 Cumpleañeros del Mes")
-        
     df_cumples = pd.read_sql_query("SELECT nombre, telefono, fecha_nacimiento FROM Clientes WHERE fecha_nacimiento IS NOT NULL AND fecha_nacimiento != 'No especificado' AND fecha_nacimiento != 'No calculado'", engine)
     if not df_cumples.empty:
         df_cumples['fecha_dt'] = pd.to_datetime(df_cumples['fecha_nacimiento'], format='%d/%m/%Y', errors='coerce')
@@ -748,7 +751,6 @@ with pestana4:
                     tel = str(fila['telefono']).replace(' ','').replace('-','')
                     msj = f"¡Hola {fila['nombre']}! 🎉 De parte de todo nuestro equipo, te deseamos un muy Feliz Cumpleaños. Que pases un excelente día lleno de alegría."
                     mensajes_cumple.append(f"https://wa.me/52{tel}?text={urllib.parse.quote(msj)}")
-                
                 cumpleañeros['Felicitar'] = mensajes_cumple
                 st.dataframe(cumpleañeros[['nombre', 'fecha_nacimiento', 'telefono', 'Felicitar']], column_config={"Felicitar": st.column_config.LinkColumn("🎁 Enviar Felicitación")}, hide_index=True, use_container_width=True)
             else: st.success("No hay clientes que cumplan años en este mes.")
@@ -822,7 +824,7 @@ with pestana5:
     else: st.info("Selecciona fechas en el calendario.")
 
 # ==========================================
-# FOOTER: FIRMA DEL CREADOR (POWERED BY)
+# FOOTER
 # ==========================================
 st.markdown("<br><br><br>", unsafe_allow_html=True)
 st.markdown("---")

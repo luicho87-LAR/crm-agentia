@@ -20,7 +20,6 @@ st.set_page_config(page_title="Agentia CRM", layout="wide", page_icon="icono_age
 
 # 🚨 LLAVE DE IA (SECRETS) 🚨
 API_KEY = st.secrets["GEMINI_API_KEY"]
-client = genai.Client(api_key=API_KEY)
 
 # --- ✨ DISEÑO ADAPTATIVO (MÓVIL Y MODO OSCURO) ✨ ---
 st.markdown("""
@@ -311,7 +310,7 @@ with col_head2:
 
 col_tit, col_vacia, col_der = st.columns([5, 1, 2])
 with col_tit:
-    st.markdown("<h1 style='color: #000000; margin-bottom: 0px;'>Sistema de Gestión Integral</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='color: #0b7af0; margin-bottom: 0px;'>Sistema de Gestión Integral</h1>", unsafe_allow_html=True)
 
 with col_der:
     if os.path.exists("logo_crm.png"):
@@ -752,17 +751,28 @@ with pestana4:
         st.dataframe(df_cobranza[['nombre', 'aseguradora', 'monto', 'fecha_limite', 'ejecutivo', 'Estatus', 'Aviso']], column_config={"Aviso": st.column_config.LinkColumn("💬 Reclamar Pago")}, hide_index=True, use_container_width=True)
         
         with st.form("form_pagos"):
-            col_a, col_b = st.columns([3, 1])
+            col_a, col_b, col_c = st.columns([2, 1, 1])
             with col_a:
                 opciones = df_cobranza.apply(lambda x: f"ID {x['id']} - {x['nombre']} - Póliza: {x['numero_poliza']} - {x['monto']}", axis=1).tolist()
-                recibo_sel = st.selectbox("Selecciona el recibo que el cliente ya liquidó:", opciones)
+                recibo_sel = st.selectbox("Selecciona el recibo:", opciones)
             with col_b:
                 st.write(""); st.write("")
-                if st.form_submit_button("💰 Registrar Pago", type="primary"):
-                    id_recibo = recibo_sel.split(" ")[1]
-                    with engine.begin() as conn:
-                        conn.execute(text("UPDATE Recibos SET estado = 'Pagado' WHERE id = :id"), {"id": id_recibo})
-                    st.success("¡El pago se ha registrado exitosamente!"); st.rerun()
+                btn_pago = st.form_submit_button("💰 Registrar Pago", type="primary", use_container_width=True)
+            with col_c:
+                st.write(""); st.write("")
+                btn_cancelar = st.form_submit_button("🚫 Marcar Cancelado", use_container_width=True)
+                
+            if btn_pago:
+                id_recibo = recibo_sel.split(" ")[1]
+                with engine.begin() as conn:
+                    conn.execute(text("UPDATE Recibos SET estado = 'Pagado' WHERE id = :id"), {"id": id_recibo})
+                st.success("¡El pago se ha registrado exitosamente!"); st.rerun()
+                
+            if btn_cancelar:
+                id_recibo = recibo_sel.split(" ")[1]
+                with engine.begin() as conn:
+                    conn.execute(text("UPDATE Recibos SET estado = 'Cancelada' WHERE id = :id"), {"id": id_recibo})
+                st.warning("Recibo marcado como Cancelado. Ya no aparecerá en pendientes."); st.rerun()
     else: st.success("¡Felicidades! Tienes cartera sana, no hay recibos pendientes de cobro manual.")
         
     st.markdown("---")

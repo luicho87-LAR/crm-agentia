@@ -790,7 +790,7 @@ with pestana4:
                 mensajes_cumple = []
                 for index, fila in cumpleañeros.iterrows():
                     tel = str(fila['telefono']).replace(' ','').replace('-','')
-                    msj = f"¡Hola {fila['nombre']}! 🎉 De parte de todo nuestro equipo, te deseamos un muy Feliz Cumpleaños. Que pases un excelente día lleno de alegría."
+                    msj = f"¡Feliz cumpleaños, {fila['nombre']}! 🎂 En este día especial, te envío mis mejores deseos. Que sea un año lleno de salud, éxito y mucha tranquilidad para ti y tu familia."
                     mensajes_cumple.append(f"https://wa.me/52{tel}?text={urllib.parse.quote(msj)}")
                 cumpleañeros['Felicitar'] = mensajes_cumple
                 st.dataframe(cumpleañeros[['nombre', 'fecha_nacimiento', 'telefono', 'Felicitar']], column_config={"Felicitar": st.column_config.LinkColumn("🎁 Enviar Felicitación")}, hide_index=True, use_container_width=True)

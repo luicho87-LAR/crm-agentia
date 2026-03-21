@@ -19,7 +19,8 @@ import plotly.express as px # NUEVO: Librería para gráficos premium
 st.set_page_config(page_title="Agentia CRM", layout="wide", page_icon="icono_agentia.png")
 
 # 🚨 LLAVE DE IA (SECRETS) 🚨
-API_KEY = st.secrets["GEMINI_API_KEY"]
+API_KEY = st.secrets["GEMINI_API_KEY"] if "GEMINI_API_KEY" in st.secrets else "TU_API_KEY_AQUI"
+client = genai.Client(api_key=API_KEY)
 
 # --- ✨ DISEÑO ADAPTATIVO (MÓVIL Y MODO OSCURO) ✨ ---
 st.markdown("""
@@ -78,7 +79,11 @@ if not st.session_state['autenticado']:
             contrasena = st.text_input("Contraseña", type="password", placeholder="••••••••")
             boton_entrar = st.form_submit_button("Iniciar Sesión ➜", type="primary", use_container_width=True)
             if boton_entrar:
-                if usuario == "Gabriela" and contrasena == "Agentia2026":
+                # La contraseña ya no está en el código, se jala de los secretos de Streamlit
+                usuario_seguro = st.secrets.get("ADMIN_USER", "admin")
+                password_seguro = st.secrets.get("ADMIN_PASSWORD", "Agentia2026")
+                
+                if usuario == usuario_seguro and contrasena == password_seguro:
                     st.session_state['autenticado'] = True
                     st.session_state['usuario_actual'] = usuario
                     st.rerun()
@@ -108,6 +113,7 @@ def inicializar_bd_completa():
         conn.execute(text('''ALTER TABLE Polizas ADD COLUMN IF NOT EXISTS tipo_producto TEXT DEFAULT 'No especificado' '''))
         conn.execute(text('''ALTER TABLE Polizas ADD COLUMN IF NOT EXISTS vehiculo TEXT DEFAULT 'N/A' '''))
         conn.execute(text('''ALTER TABLE Polizas ADD COLUMN IF NOT EXISTS prima_total TEXT DEFAULT '0' '''))
+        conn.execute(text('''ALTER TABLE Prospectos ADD COLUMN IF NOT EXISTS aviso_privacidad TEXT DEFAULT 'No' '''))
         
         res = conn.execute(text("SELECT COUNT(*) FROM Ejecutivos")).scalar()
         if res == 0:
@@ -694,10 +700,16 @@ with pestana3:
             producto = st.selectbox("Ramo cotizado", ["Autos", "Gastos Médicos Mayores", "Vida", "Daños Empresariales", "Hogar"])
             fecha_cotizacion = st.date_input("Fecha de cotización")
             ejecutivo_prospecto = st.selectbox("Ejecutivo / Sub-agente a cargo", lista_dinamica_ejecutivos)
+            
+            # Candado Legal: Checkbox obligatorio
+            aviso_privacidad = st.checkbox("✅ El cliente acepta el Aviso de Privacidad (Obligatorio por Ley)")
+            
             if st.form_submit_button("Guardar Prospecto", type="primary"):
-                if nombre and telefono:
+                if not aviso_privacidad:
+                    st.error("🚨 Requisito legal: Debes confirmar que el cliente aceptó el Aviso de Privacidad.")
+                elif nombre and telefono:
                     with engine.begin() as conn:
-                        conn.execute(text("INSERT INTO Prospectos (nombre, correo, telefono, producto, fecha_cotizacion, ejecutivo) VALUES (:nom, :cor, :tel, :prod, :fec, :ejec)"),
+                        conn.execute(text("INSERT INTO Prospectos (nombre, correo, telefono, producto, fecha_cotizacion, ejecutivo, aviso_privacidad) VALUES (:nom, :cor, :tel, :prod, :fec, :ejec, 'Sí')"),
                                     {"nom": nombre, "cor": correo, "tel": telefono, "prod": producto, "fec": fecha_cotizacion.strftime("%Y-%m-%d"), "ejec": ejecutivo_prospecto})
                     st.success("¡Guardado!"); st.rerun()
                 else: st.error("Ingresa nombre y teléfono.")
@@ -790,7 +802,7 @@ with pestana4:
                 mensajes_cumple = []
                 for index, fila in cumpleañeros.iterrows():
                     tel = str(fila['telefono']).replace(' ','').replace('-','')
-                    msj = f"¡Feliz cumpleaños, {fila['nombre']}! 🎂 En este día especial, te envío mis mejores deseos. Que sea un año lleno de salud, éxito y mucha tranquilidad para ti y tu familia."
+                    msj = f"¡Hola {fila['nombre']}! 🎉 muchas felicidades hoy en tu Cumpleaños. Que pases un excelente día lleno de alegría."
                     mensajes_cumple.append(f"https://wa.me/52{tel}?text={urllib.parse.quote(msj)}")
                 cumpleañeros['Felicitar'] = mensajes_cumple
                 st.dataframe(cumpleañeros[['nombre', 'fecha_nacimiento', 'telefono', 'Felicitar']], column_config={"Felicitar": st.column_config.LinkColumn("🎁 Enviar Felicitación")}, hide_index=True, use_container_width=True)
